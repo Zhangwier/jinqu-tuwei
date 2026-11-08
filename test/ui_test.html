@@ -1,0 +1,88 @@
+<!doctype html>
+<html lang="zh-CN">
+<head><meta charset="utf-8" /><title>禁区突围 操作测试</title>
+<style>body{margin:0;background:#222;color:#eee}canvas{width:360px;height:640px}</style></head>
+<body>
+  <canvas id="game"></canvas>
+  <pre id="out">running</pre>
+  <script src="../js/data.js"></script>
+  <script src="../js/board.js"></script>
+  <script src="../js/sim.js"></script>
+  <script src="../js/ai.js"></script>
+  <script src="../js/render.js"></script>
+  <script src="../js/vfx.js"></script>
+  <script src="../js/main.js"></script>
+  <script>
+    // 用合成指针事件模拟拖放，结果写进 #out。无头跑法：
+    // msedge --headless=new --dump-dom "http://127.0.0.1:8731/test/ui_test.html"
+    const out = [], fails = [];
+    const check = (ok, name) => (ok ? out.push('✓ ' + name) : (fails.push(name), out.push('✗ ' + name)));
+    try {
+      const j = window.__jq; j.newGame();
+      const g = j.game, s = g.sides[0];
+      s.buns = 500;
+      const cv = document.getElementById('game');
+      const ev = (type, x, y, pt) => {
+        const R = cv.getBoundingClientRect();
+        cv.dispatchEvent(new PointerEvent(type, { clientX: R.left + (x / 720) * R.width, clientY: R.top + (y / 1280) * R.height, bubbles: true, pointerId: 1, pointerType: pt || 'mouse' }));
+      };
+      const drag = (a, b, pt) => { ev('pointerdown', ...a, pt); ev('pointermove', (a[0] + b[0]) / 2, (a[1] + b[1]) / 2, pt); ev('pointermove', ...b, pt); ev('pointerup', ...b, pt); };
+      const tap = (a) => { ev('pointerdown', ...a); ev('pointerup', ...a); };
+      const sr = (i) => { const r = JQ.shopRect(i); return [r.x + r.w / 2, r.y + r.h / 2]; };
+      const cr = (r, c) => { const x = JQ.cellRect(0, r, c); return [x.cx, x.cy]; };
+      const mk = (k, key) => JQ.makeCard(k, key);
+      const B = s.board;
+
+      s.shop = [mk('unit', '刀'), mk('unit', '刀'), mk('unit', '弓'), mk('char', '张'), mk('char', '飞')];
+      drag(sr(0), sr(1));
+      check(!s.shop[0] && s.shop[1].level === 2, '备战席拖动合成升级');
+      drag(sr(1), cr(0, 2));
+      check(B.cell(0, 2).card && B.cell(0, 2).card.level === 2, '拖上场');
+      // 松手点在水晶格偏右：吸附到右边空格 (0,4)，不会去顶替左边的刀
+      drag(sr(2), [cr(0, 3)[0] + 25, cr(0, 3)[1]]);
+      check(B.cell(0, 4).card && B.cell(0, 4).card.key === '弓' && B.cell(0, 2).card.key === '刀', '吸附到最近空格、不误替换');
+      s.shop[2] = mk('unit', '盾');
+      drag(sr(2), cr(0, 2));
+      check(B.cell(0, 2).card.key === '盾' && s.shop[2] && s.shop[2].key === '刀', '正对场上卡=替换，被换下的回备战席');
+      drag(cr(0, 2), sr(0));
+      check(!B.cell(0, 2).card && s.shop[0] && s.shop[0].key === '盾', '场上卡拖回备战席空位');
+      drag(sr(3), cr(1, 2)); drag(sr(4), cr(1, 3));
+      check(B.links.some((l) => l.hero === '张飞'), '两字左右相邻成英雄');
+      s.shop[4] = mk('char', '飞');
+      drag(sr(4), cr(1, 2));
+      check(B.links[0].level === 2, '同字拖到英雄身上升级');
+      // 点选场上卡再点备战席空位 = 收回
+      const before = s.shop.filter(Boolean).length;
+      tap(cr(0, 4)); tap(sr(4));
+      check(s.shop[4] && s.shop[4].key === '弓' && s.shop.filter(Boolean).length === before + 1, '点选场上卡再点备战席=收回');
+      // 招兵：先卖备战席
+      const bv = g.sellValue ? s.shop.reduce((t, c) => t + g.sellValue(c), 0) : 0;
+      const buns0 = s.buns, cost = s.recruitCost();
+      tap([JQ.UI.recruit.x + 60, JQ.UI.recruit.y + 40]);
+      check(Math.round(s.buns) === Math.round(buns0 + bv - cost), `招兵自动卖备战席 +${bv}`);
+      // 双击卖卡：默认关，打开后双击场上卡卖掉
+      B.cell(0, 4).card = mk('unit', '剑'); B.rebuild();
+      tap(cr(0, 4)); tap(cr(0, 4));
+      check(!!B.cell(0, 4).card, '双击卖卡默认关闭');
+      j.setDblSell(true);
+      tap(cr(0, 4)); tap(cr(0, 4));
+      check(!B.cell(0, 4).card, '打开后双击场上卡直接卖');
+      j.setDblSell(false);
+      // 拖到包子单卖
+      s.shop[0] = mk('unit', '剑');
+      const b1 = s.buns;
+      drag(sr(0), [JQ.UI.bun.x + 37, JQ.UI.bun.y + 40]);
+      check(s.buns === b1 + 1 && !s.shop[0], '备战席 1 级卡拖到包子单卖 +1');
+      // 触屏抬高落点：手指在格子下方 46px
+      s.shop[0] = mk('unit', '枪');
+      const [x, y] = cr(1, 4);
+      drag(sr(0), [x, y + 46], 'touch');
+      check(B.cell(1, 4).card && B.cell(1, 4).card.key === '枪', '触屏落点抬高');
+    } catch (e) {
+      fails.push('异常 ' + e.message);
+      out.push(e.stack);
+    }
+    document.getElementById('out').textContent = (fails.length ? 'FAIL ' + fails.length : 'PASS') + '\n' + out.join('\n');
+  </script>
+</body>
+</html>

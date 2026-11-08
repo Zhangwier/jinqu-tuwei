@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="zh-CN">
+<head><meta charset="utf-8" /><title>禁区突围 特效预览</title>
+<style>html,body{margin:0;height:100%;background:#1d1810;display:flex;align-items:center;justify-content:center}canvas{height:100vh}</style></head>
+<body>
+  <canvas id="c" width="720" height="1280"></canvas>
+  <script src="../js/data.js"></script>
+  <script src="../js/board.js"></script>
+  <script src="../js/sim.js"></script>
+  <script src="../js/render.js"></script>
+  <script src="../js/vfx.js"></script>
+  <script>
+    // 网格循环播放所有特效；?k=0.5 定格在某个进度（截图用）
+    const g = document.getElementById('c').getContext('2d');
+    const kinds = Object.keys(JQ.VFX);
+    const fixedK = +(location.search.match(/k=([\d.]+)/) || [])[1];
+    const COLS = 3, CW = 240, CH = 190;
+    const enemy = { x: 0, y: 0 };
+    const t0 = performance.now();
+    function frame(now) {
+      const time = (now - t0) / 1000;
+      g.fillStyle = '#d6ccb0';
+      g.fillRect(0, 0, 720, 1280);
+      kinds.forEach((kind, i) => {
+        const cx = (i % COLS) * CW + CW / 2, cy = Math.floor(i / COLS) * CH + CH * 0.72;
+        g.strokeStyle = 'rgba(0,0,0,0.12)';
+        g.strokeRect((i % COLS) * CW, Math.floor(i / COLS) * CH, CW, CH);
+        JQ.text(g, kind, (i % COLS) * CW + 8, Math.floor(i / COLS) * CH + 14, 14, '#3a2a10', { align: 'left', font: 'sans-serif' });
+        const life = 1.5;
+        const k = fixedK >= 0 && !isNaN(fixedK) ? fixedK : (time % life) / life;
+        const follow = { x: cx, y: cy - 20 };
+        const f = { kind, x: cx, y: cy, t: k * life, life, color: '#ffb030', r: 60, x2: cx + 90, y2: cy - 90, ang: -0.6, len: 140, width: 70, text: '鼓舞', follow: kind === 'wheels' || kind === 'warcry' ? follow : null };
+        if (kind === 'dragon' || kind === 'wave' || kind === 'eye') Object.assign(f, { x: cx - 90, y: cy, x2: cx + 90, y2: cy - 60, width: 30 });
+        g.save();
+        g.beginPath();
+        g.rect((i % COLS) * CW, Math.floor(i / COLS) * CH, CW, CH);
+        g.clip();
+        try {
+          JQ.VFX[kind](g, f, k, { time });
+        } catch (e) {
+          console.error(kind, e);
+        }
+        g.restore();
+      });
+      // 飞行道具
+      Object.keys(JQ.VFXP).forEach((kind, i) => {
+        const y = 1210 - i * 0, x = 60 + i * 170 + ((time * 120) % 120);
+        g.save();
+        try {
+          JQ.VFXP[kind](g, { x, y, ang: 0, color: '#ffb030' }, time);
+        } catch (e) {
+          console.error(kind, e);
+        }
+        g.restore();
+        JQ.text(g, kind, 60 + i * 170, 1250, 13, '#3a2a10', { align: 'left', font: 'sans-serif' });
+      });
+      requestAnimationFrame(frame);
+    }
+    requestAnimationFrame(frame);
+  </script>
+</body>
+</html>
