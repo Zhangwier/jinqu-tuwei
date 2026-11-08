@@ -213,6 +213,46 @@ function heroTable(seeds, team) {
     .sort((a, b) => b.win - a.win || b.hpWin - a.hpWin);
 }
 
+// 英雄清兵：3 级英雄单挑 12 个标准小兵（2 盾 2 刀 2 枪 4 弓 2 刺）
+function heroClear(name, seed, unitLevel) {
+  const g = game(seed);
+  const A = g.sides[0], B = g.sides[1];
+  const h = JQ.HEROES[name];
+  const back = h.ranged || h.role === '辅助' || h.role === '法师' || h.role === '射手' || h.role === '特殊';
+  const hero = spawnH(g, A, name, 3, 360, back ? 680 : 600);
+  const add = (key, x, y) => spawnU(g, B, key, unitLevel, x, y);
+  add('盾', 300, 540); add('盾', 420, 540);
+  add('刀', 280, 560); add('刀', 440, 560);
+  add('枪', 300, 580); add('枪', 420, 580);
+  add('弓', 280, 500); add('弓', 340, 500); add('弓', 380, 500); add('弓', 440, 500);
+  add('刺', 300, 520); add('刺', 420, 520);
+  const total = 12;
+  let t = 0;
+  while (t < MAX_T) {
+    g.step(DT);
+    t += DT;
+    if (hero.hp <= 0) break;
+    if (alive(g, 1).length === 0) break;
+  }
+  const kills = total - alive(g, 1).length;
+  return { kills, total, clear: kills === total, hp: Math.max(0, hero.hp / hero.maxHp), t };
+}
+function heroClearTable(seeds, unitLevel) {
+  const names = Object.keys(JQ.HEROES);
+  const stats = {};
+  for (const n of names) stats[n] = { kills: 0, clears: 0, hp: 0, time: 0, games: 0, total: 12 };
+  for (const n of names)
+    for (let s = 0; s < seeds; s++) {
+      const r = heroClear(n, 5000 + s * 997 + names.indexOf(n) * 41, unitLevel);
+      const x = stats[n];
+      x.games++; x.kills += r.kills; x.clears += r.clear ? 1 : 0; x.hp += r.hp; x.time += r.t; x.total = r.total;
+    }
+  return names.map((n) => {
+    const x = stats[n], h = JQ.HEROES[n];
+    return { name: n, pack: h.pack, role: h.role, games: x.games, total: x.total, kills: x.kills / x.games, clear: x.clears / x.games, hp: x.hp / x.games, time: x.time / x.games };
+  }).sort((a, b) => b.clear - a.clear || b.kills - a.kills || b.hp - a.hp || a.time - b.time);
+}
+
 function mdUnit(title, rows) {
   const lines = [`## ${title}`, '', '| # | 兵种 | 胜率 | 胜-负-平 | 胜场剩余血量 | 平均时长 |', '| --- | --- | --- | --- | --- | --- |'];
   rows.forEach((r, i) => lines.push(`| ${i + 1} | ${r.key} | ${(r.win * 100).toFixed(1)}% | ${r.w}-${r.l}-${r.t} | ${(r.hpWin * 100).toFixed(0)}% | ${r.avgT.toFixed(1)}s |`));
@@ -223,11 +263,32 @@ function mdHero(title, rows) {
   rows.forEach((r, i) => lines.push(`| ${i + 1} | ${r.name} | ${r.pack} | ${r.role} | ${(r.win * 100).toFixed(1)}% | ${r.w}-${r.l}-${r.t} | ${(r.hpWin * 100).toFixed(0)}% | ${r.avgT.toFixed(1)}s |`));
   return lines.join('\n');
 }
+function mdClear(title, rows) {
+  const lines = [`## ${title}`, '', '| # | 英雄 | 卡包 | 定位 | 清完率 | 平均击杀 | 剩余血量 | 平均用时 |', '| --- | --- | --- | --- | --- | --- | --- | --- |'];
+  rows.forEach((r, i) => lines.push(`| ${i + 1} | ${r.name} | ${r.pack} | ${r.role} | ${(r.clear * 100).toFixed(1)}% | ${r.kills.toFixed(1)}/${r.total} | ${(r.hp * 100).toFixed(0)}% | ${r.time.toFixed(1)}s |`));
+  return lines.join('\n');
+}
+function levelRows() {
+  const rows = [];
+  for (let lv = 1; lv <= 6; lv++) {
+    const cards = Math.pow(2, lv - 1);
+    const count = JQ.unitCount(lv);
+    const mult = JQ.levelMult(lv);
+    const power = count * mult;
+    rows.push({ lv, cards, count, mult, power, eff: power / cards });
+  }
+  return rows;
+}
+function mdLevel(rows) {
+  const lines = ['## 小兵升级：每张卡的战力与“每张 1 级卡”效率', '', '| 等级 | 合成需要 1 级卡 | 每次召唤 | 属性倍率 | 单卡理论战力 | 每张 1 级卡效率 |', '| --- | --- | --- | --- | --- | --- |'];
+  rows.forEach((r) => lines.push(`| Lv${r.lv} | ${r.cards} | ${r.count} | ×${r.mult.toFixed(2)} | ${r.power.toFixed(2)} | ${r.eff.toFixed(3)} |`));
+  return lines.join('\n');
+}
 
 (async () => {
   const out = { meta: { generated: new Date().toISOString(), seeds: SEEDS, level: LEVEL, mode: MODE }, units: {}, heroes: {} };
   let md = '# 禁区突围 · 单位实力数据\n\n';
-  md += `- 生成时间：${out.meta.generated}\n- 采样：每个对局交换先后手，${SEEDS} 组种子；战斗步长 1/30 秒，单场上限 ${MAX_T}s。\n- 小兵：同兵种 1v1 / 5v5 / 混编 5v5（测试兵 + 2 盾 + 2 弓）；英雄：3 级 1v1 / 3 级英雄 + 4 刀 / 3 级英雄 + 2 盾 + 2 弓。\n- 判定：一方全灭即负；到时限按剩余血量比例判。\n\n`;
+  md += `- 生成时间：${out.meta.generated}\n- 采样：每个对局交换先后手，${SEEDS} 组种子；战斗步长 1/30 秒，单场上限 ${MAX_T}s。\n- 小兵：同兵种 1v1 / 5v5 / 混编 5v5（测试兵 + 2 盾 + 2 弓）；英雄：3 级 1v1 / 3 级英雄 + 4 刀 / 3 级英雄 + 2 盾 + 2 弓；另测 3 级英雄单挑 12 个 1 级/5 级小兵。\n- 判定：一方全灭即负；到时限按剩余血量比例判。\n\n`;
   if (MODE === 'units' || MODE === 'all') {
     const r1 = unitTable(LEVEL, 1, SEEDS);
     const r5 = unitTable(LEVEL, 5, SEEDS);
@@ -235,9 +296,11 @@ function mdHero(title, rows) {
     const dps = {};
     for (const k of JQ.ALL_UNITS) dps[k] = +unitDps(k, LEVEL).toFixed(1);
     out.units = { level: LEVEL, solo: r1, group: r5, mixed: rm, dps };
+    out.level5 = levelRows();
     md += mdUnit(`小兵 1v1（${LEVEL} 级）`, r1) + '\n\n';
     md += mdUnit(`小兵 5v5（${LEVEL} 级）`, r5) + '\n\n';
     md += mdUnit(`小兵混编 5v5（${LEVEL} 级：测试兵 + 2 盾 + 2 弓）`, rm) + '\n\n';
+    md += mdLevel(out.level5) + '\n\n';
     md += '## 小兵 10 秒打桩 DPS\n\n| 兵种 | DPS |\n| --- | --- |\n';
     Object.entries(dps).sort((a, b) => b[1] - a[1]).forEach(([k, v]) => (md += `| ${k} | ${v} |\n`));
     md += '\n';
@@ -246,10 +309,14 @@ function mdHero(title, rows) {
     const solo = heroTable(SEEDS, false);
     const team = heroTable(SEEDS, 'blade');
     const mix = heroTable(SEEDS, 'mix');
-    out.heroes = { level: 3, solo, team, mix };
+    const clear1 = heroClearTable(SEEDS, 1);
+    const clear5 = heroClearTable(SEEDS, 5);
+    out.heroes = { level: 3, solo, team, mix, clear1, clear5 };
     md += mdHero('英雄 3 级 1v1', solo) + '\n\n';
     md += mdHero('英雄 3 级 + 4 刀团战', team) + '\n\n';
     md += mdHero('英雄 3 级 + 2 盾 + 2 弓团战', mix) + '\n\n';
+    md += mdClear('英雄清兵（3 级 vs 12 个 1 级小兵）', clear1) + '\n\n';
+    md += mdClear('英雄清兵（3 级 vs 12 个 5 级小兵）', clear5) + '\n\n';
   }
   const mdPath = path.join(__dirname, 'power_report.md');
   const jsonPath = path.join(__dirname, 'power_report.json');

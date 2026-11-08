@@ -527,7 +527,7 @@
 
   JQ.levelMult = (lv) => 1 + 0.35 * (lv - 1);
   JQ.heroLevelMult = (lv) => 1 + 0.3 * (lv - 1);
-  JQ.unitCount = (lv) => [1, 1, 2, 2, 3][lv - 1] || 3;
+  JQ.unitCount = (lv) => (lv >= 5 ? 4 : [1, 1, 2, 2][lv - 1] || 1); // 5 级起每次召 4 个，作为合卡门槛
   // 等级配色：1 灰、2 绿、3 蓝、4 紫、5 金
   JQ.LEVEL_COLORS = ['#888', '#8c8c8c', '#2fa84f', '#2a7be0', '#9a3ee0', '#f0a020'];
 
