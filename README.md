@@ -111,6 +111,7 @@ python -m http.server 8731
 - `test/sim_test.js` 规则单测 + 49 英雄大招检查 + 按难度批量对局 + 各卡包两两对决（下方用“普通玩家手速”画像：2 秒想一次、每次 2 步）：`node test/sim_test.js 30`
 - `test/fate_sim.js` 天命 200 关长期模拟：`node test/fate_sim.js 天赋,天赋,天赋`
 - `test/perf_probe.js` 手机视口帧率探针；`test/render_bench.js` 渲染基准；`test/js_profile.js` 渲染 JS 热点；`test/shot.js` CDP 手机截图
+- `test/power_report.js` 小兵/英雄实力数据（1v1、5v5、混编团战、打桩 DPS）：`node test/power_report.js all 2`；结果见 `test/power_report.md` / `.json`
 
 ## 与原版的差异
 
