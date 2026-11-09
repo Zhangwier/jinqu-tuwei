@@ -30,6 +30,52 @@
   };
   JQ.shopRect = (i) => ({ x: UI.shop.x + i * (UI.shop.w + UI.shop.gap), y: UI.shop.y, w: UI.shop.w, h: UI.shop.h });
 
+  // ---------- 界面素材图集（img/ui.webp，绿幕素材表抠出来的，坐标 = 图集像素） ----------
+  // 没加载完时各处都回落到代码绘制
+  const ATLAS = {
+    btn_gold: [0, 0, 225, 73], btn_paper: [227, 0, 222, 73], btn_wood: [451, 0, 222, 73], btn_red: [675, 0, 223, 73],
+    btn_stone: [0, 75, 225, 73], tab_on: [227, 75, 217, 100], tab_off: [446, 75, 218, 80], disc: [666, 75, 147, 147],
+    panel: [815, 75, 208, 183], scroll: [0, 260, 296, 151], card: [298, 260, 155, 152], slot: [455, 260, 165, 165],
+    ic_hero: [622, 260, 173, 168], ic_unit: [797, 260, 173, 168], ic_talent: [0, 430, 172, 168], ic_custom: [174, 430, 173, 168],
+    ic_test: [349, 430, 173, 167], ic_gear: [524, 430, 173, 168], ic_help: [699, 430, 172, 168], ic_close: [0, 600, 173, 167],
+    coin: [175, 600, 164, 164], bun: [341, 600, 168, 141], lock: [511, 600, 170, 164], chest: [683, 600, 196, 158],
+  };
+  const uiImg = new Image();
+  uiImg.src = 'img/ui.webp?v=20261109r';
+  const uiOk = () => uiImg.complete && uiImg.naturalWidth > 0;
+  JQ.uiOk = uiOk;
+  // 整张贴（图标），按宽高缩放
+  JQ.uiDraw = function (g, name, x, y, w, h) {
+    if (!uiOk()) return false;
+    const a = ATLAS[name];
+    g.drawImage(uiImg, a[0], a[1], a[2], a[3], x, y, w, h);
+    return true;
+  };
+  // 横向三段（按钮/页签）：整体按高度等比缩放，只拉伸中间；cap = 左右端头在图集里的像素宽
+  JQ.ui3 = function (g, name, x, y, w, h, cap) {
+    if (!uiOk()) return false;
+    const [sx, sy, sw, sh] = ATLAS[name];
+    cap = cap || 40;
+    const k = h / sh, dc = Math.min(cap * k, w / 2);
+    g.drawImage(uiImg, sx, sy, cap, sh, x, y, dc, h);
+    g.drawImage(uiImg, sx + cap, sy, sw - 2 * cap, sh, x + dc, y, w - 2 * dc, h);
+    g.drawImage(uiImg, sx + sw - cap, sy, cap, sh, x + w - dc, y, dc, h);
+    return true;
+  };
+  // 九宫格（面板/卡框/槽位）：四角不变形，边和中间拉伸；inset = 图集里的角宽，d = 画出来的角宽
+  JQ.ui9 = function (g, name, x, y, w, h, inset, d) {
+    if (!uiOk()) return false;
+    const [sx, sy, sw, sh] = ATLAS[name];
+    const i = inset || 36;
+    d = Math.min(d || i, w / 2, h / 2);
+    const xs = [sx, sx + i, sx + sw - i], ws = [i, sw - 2 * i, i];
+    const ys = [sy, sy + i, sy + sh - i], hs = [i, sh - 2 * i, i];
+    const dx = [x, x + d, x + w - d], dw = [d, w - 2 * d, d];
+    const dy = [y, y + d, y + h - d], dh = [d, h - 2 * d, d];
+    for (let r = 0; r < 3; r++) for (let c = 0; c < 3; c++) g.drawImage(uiImg, xs[c], ys[r], ws[c], hs[r], dx[c], dy[r], dw[c], dh[r]);
+    return true;
+  };
+
   const INK = ['#141414', '#7d1212'];
   const TEAM = ['#3d8bff', '#ff4a3a'];
 
@@ -1489,7 +1535,8 @@
       g.stroke();
       g.restore();
     }
-    drawBun(g, bun.x + bun.w / 2, bun.y + 30, view.target && view.target.sell ? 28 : 24);
+    const bs = view.target && view.target.sell ? 1.15 : 1;
+    if (!JQ.uiDraw(g, 'bun', bun.x + bun.w / 2 - 28 * bs, bun.y + 30 - 24 * bs, 56 * bs, 47 * bs)) drawBun(g, bun.x + bun.w / 2, bun.y + 30, view.target && view.target.sell ? 28 : 24);
     const pop = view.bunPop > 0 ? 1 + view.bunPop * 0.6 : 1;
     g.save();
     g.translate(bun.x + bun.w / 2, bun.y + 70);
@@ -1559,20 +1606,23 @@
       g.shadowColor = '#ffcf5a';
       g.shadowBlur = 10 + Math.sin(t * 5) * 8;
     }
-    rr(g, rb.x, rb.y, rb.w, rb.h, 14);
-    const grd = g.createLinearGradient(0, rb.y, 0, rb.y + rb.h);
-    grd.addColorStop(0, ok ? '#ffe39a' : '#cfc7b4');
-    grd.addColorStop(1, ok ? '#e09a33' : '#a9a191');
-    g.fillStyle = grd;
-    g.fill();
+    if (!JQ.ui3(g, ok ? 'btn_gold' : 'btn_stone', rb.x, rb.y, rb.w, rb.h, 46)) {
+      rr(g, rb.x, rb.y, rb.w, rb.h, 14);
+      const grd = g.createLinearGradient(0, rb.y, 0, rb.y + rb.h);
+      grd.addColorStop(0, ok ? '#ffe39a' : '#cfc7b4');
+      grd.addColorStop(1, ok ? '#e09a33' : '#a9a191');
+      g.fillStyle = grd;
+      g.fill();
+      g.shadowBlur = 0;
+      g.lineWidth = 3;
+      g.strokeStyle = '#6a4a20';
+      g.stroke();
+    }
     g.shadowBlur = 0;
-    g.lineWidth = 3;
-    g.strokeStyle = '#6a4a20';
-    g.stroke();
     text(g, '招 兵', rb.x + rb.w / 2, rb.y + 24, 30, '#3a2a10');
     const bv = game.benchValue(0);
     text(g, bv ? `卖备战席 +${bv}` : '整排刷新', rb.x + rb.w / 2, rb.y + 48, 12, '#6a4a20', { font: 'sans-serif', bold: false });
-    drawBun(g, rb.x + rb.w / 2 - 20, rb.y + 70, 10);
+    if (!JQ.uiDraw(g, 'bun', rb.x + rb.w / 2 - 33, rb.y + 61, 24, 20)) drawBun(g, rb.x + rb.w / 2 - 20, rb.y + 70, 10);
     text(g, String(s.recruitCost()), rb.x + rb.w / 2 + 10, rb.y + 71, 18, s.buns >= s.recruitCost() ? '#3a2a10' : '#b02010', { font: 'sans-serif' });
     g.restore();
 
@@ -1586,6 +1636,10 @@
 
   function roundBtn(g, r, txt) {
     g.save();
+    if (JQ.uiDraw(g, 'disc', r.x - 2, r.y - 2, r.w + 4, r.h + 4)) {
+      text(g, txt, r.x + r.w / 2, r.y + r.h / 2 + 1, 17, '#fff3d6', { font: 'sans-serif', stroke: '#2a1a08', strokeW: 3 });
+      return g.restore();
+    }
     g.fillStyle = 'rgba(40,30,20,0.7)';
     g.beginPath();
     g.arc(r.x + r.w / 2, r.y + r.h / 2, r.w / 2, 0, TAU);
