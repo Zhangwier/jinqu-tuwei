@@ -42,7 +42,21 @@
   window.__jqPerf = () => ({ qScale, scale, dpr, noGlow, w: canvas.width, h: canvas.height });
 
   // ---------- 音效（WebAudio 合成，无外部文件） ----------
-  let actx = null, muted = localStorage.getItem('jq_mute') === '1', lastHit = 0;
+  // 全部声音走一条总线：master → 压缩器 → 扬声器，避免大混战时爆音
+  let lastKillSfx = 0, lastHeart = 0;
+  let actx = null, muted = localStorage.getItem('jq_mute') === '1', lastHit = 0, bus = null;
+  let musicOn = localStorage.getItem('jq_music') !== '0';
+  function audio() {
+    if (actx) return actx;
+    actx = new (window.AudioContext || window.webkitAudioContext)();
+    const comp = actx.createDynamicsCompressor();
+    comp.threshold.value = -14;
+    comp.ratio.value = 4;
+    bus = actx.createGain();
+    bus.gain.value = 0.9;
+    bus.connect(comp).connect(actx.destination);
+    return actx;
+  }
   function tone(f, d, type, vol, slide, delay) {
     const now = actx.currentTime + (delay || 0);
     const o = actx.createOscillator(), v = actx.createGain();
@@ -51,38 +65,145 @@
     if (slide) o.frequency.exponentialRampToValueAtTime(slide, now + d);
     v.gain.setValueAtTime(vol || 0.15, now);
     v.gain.exponentialRampToValueAtTime(0.001, now + d);
-    o.connect(v).connect(actx.destination);
+    o.connect(v).connect(bus);
     o.start(now);
     o.stop(now + d);
   }
-  function noise(d, vol) {
-    const n = actx.sampleRate * d, buf = actx.createBuffer(1, n, actx.sampleRate), data = buf.getChannelData(0);
-    for (let i = 0; i < n; i++) data[i] = (Math.random() * 2 - 1) * (1 - i / n);
-    const src = actx.createBufferSource(), v = actx.createGain();
-    src.buffer = buf;
-    v.gain.value = vol;
-    src.connect(v).connect(actx.destination);
-    src.start();
+  let noiseBuf = null;
+  function noise(d, vol, delay, hp) {
+    if (!noiseBuf) {
+      const n = actx.sampleRate * 1;
+      noiseBuf = actx.createBuffer(1, n, actx.sampleRate);
+      const data = noiseBuf.getChannelData(0);
+      for (let i = 0; i < n; i++) data[i] = Math.random() * 2 - 1;
+    }
+    const now = actx.currentTime + (delay || 0);
+    const src = actx.createBufferSource(), v = actx.createGain(), fl = actx.createBiquadFilter();
+    src.buffer = noiseBuf;
+    fl.type = hp ? 'highpass' : 'lowpass';
+    fl.frequency.value = hp || 1800;
+    v.gain.setValueAtTime(vol, now);
+    v.gain.exponentialRampToValueAtTime(0.001, now + d);
+    src.connect(fl).connect(v).connect(bus);
+    src.start(now, Math.random() * 0.5);
+    src.stop(now + d);
+  }
+  // 拨弦（古筝/琵琶味）：三角波 + 二倍泛音，快起慢落，起音带一点拨片噪声
+  function pluck(f, d, vol, delay, out) {
+    const now = actx.currentTime + (delay || 0);
+    const v = actx.createGain();
+    v.gain.setValueAtTime(0.0001, now);
+    v.gain.exponentialRampToValueAtTime(vol, now + 0.006);
+    v.gain.exponentialRampToValueAtTime(0.001, now + d);
+    v.connect(out || bus);
+    for (const [mul, a, type] of [[1, 1, 'triangle'], [2, 0.35, 'sine'], [3, 0.12, 'sine']]) {
+      const o = actx.createOscillator(), og = actx.createGain();
+      o.type = type;
+      o.frequency.setValueAtTime(f * mul * 1.006, now);
+      o.frequency.exponentialRampToValueAtTime(f * mul, now + 0.05);
+      og.gain.value = a;
+      o.connect(og).connect(v);
+      o.start(now);
+      o.stop(now + d);
+    }
+  }
+  // 鼓：正弦下滑 + 一点噪声
+  function drum(f, d, vol, delay, out) {
+    const now = actx.currentTime + (delay || 0);
+    const o = actx.createOscillator(), v = actx.createGain();
+    o.type = 'sine';
+    o.frequency.setValueAtTime(f * 2.2, now);
+    o.frequency.exponentialRampToValueAtTime(f, now + 0.08);
+    v.gain.setValueAtTime(vol, now);
+    v.gain.exponentialRampToValueAtTime(0.001, now + d);
+    o.connect(v).connect(out || bus);
+    o.start(now);
+    o.stop(now + d);
+  }
+  // 锣：几组不成整数倍的泛音，长尾
+  function gong(f, d, vol, delay) {
+    for (const [m, a] of [[1, 1], [1.48, 0.5], [2.11, 0.35], [2.73, 0.2]]) tone(f * m, d * (1.1 - m * 0.15), 'sine', vol * a, f * m * 0.985, delay);
+    noise(0.12, vol * 0.6, delay, 2500);
   }
   function sfx(kind) {
     if (muted) return;
     try {
-      actx = actx || new (window.AudioContext || window.webkitAudioContext)();
+      audio();
     } catch (e) {
       return;
     }
-    if (kind === 'recruit') [0, 0.05, 0.1, 0.15, 0.2].forEach((d, i) => tone(500 + i * 90, 0.08, 'square', 0.05, null, d));
-    else if (kind === 'place') tone(330, 0.1, 'triangle', 0.15);
-    else if (kind === 'merge') (tone(660, 0.15, 'triangle', 0.15, 990), tone(990, 0.25, 'sine', 0.1, null, 0.08));
-    else if (kind === 'hero') (tone(220, 0.5, 'sawtooth', 0.07, 440), tone(440, 0.5, 'triangle', 0.1, 880));
-    else if (kind === 'ult') (noise(0.5, 0.25), tone(110, 0.8, 'sawtooth', 0.12, 55), tone(660, 0.6, 'triangle', 0.1, 1320, 0.1));
-    else if (kind === 'hit') tone(120, 0.15, 'sawtooth', 0.07, 60);
-    else if (kind === 'skill') tone(880, 0.22, 'sine', 0.07, 300);
-    else if (kind === 'win') [523, 659, 784, 1046].forEach((f, i) => tone(f, 0.3, 'triangle', 0.12, null, i * 0.14));
-    else if (kind === 'lose') [392, 330, 262].forEach((f, i) => tone(f, 0.35, 'triangle', 0.12, null, i * 0.2));
-    else if (kind === 'bad') tone(160, 0.12, 'square', 0.06);
-    else if (kind === 'sell') (tone(900, 0.08, 'square', 0.05), tone(1200, 0.1, 'square', 0.05, null, 0.06));
+    if (kind === 'recruit') [0, 0.045, 0.09, 0.135].forEach((d, i) => pluck(587 * [1, 1.125, 1.25, 1.5][i], 0.25, 0.09, d));
+    else if (kind === 'place') (drum(150, 0.16, 0.22), noise(0.05, 0.08, 0, 1200));
+    else if (kind === 'merge') (pluck(880, 0.35, 0.12), pluck(1320, 0.45, 0.1, 0.07), tone(1760, 0.3, 'sine', 0.04, null, 0.12));
+    else if (kind === 'hero') (gong(196, 1.4, 0.16), pluck(392, 0.6, 0.12, 0.05), pluck(587, 0.7, 0.1, 0.16), drum(70, 0.4, 0.3));
+    else if (kind === 'ult') (drum(55, 0.6, 0.38), noise(0.45, 0.22), gong(130, 1.2, 0.12, 0.05), tone(660, 0.5, 'triangle', 0.06, 1320, 0.1));
+    else if (kind === 'hit') (drum(90, 0.22, 0.25), noise(0.08, 0.1));
+    else if (kind === 'skill') (pluck(740, 0.25, 0.06), noise(0.12, 0.05, 0, 3000));
+    else if (kind === 'crit') (noise(0.06, 0.12, 0, 2500), tone(1400, 0.08, 'square', 0.03, 700));
+    else if (kind === 'coin') pluck(1568 + Math.random() * 200, 0.15, 0.05);
+    else if (kind === 'kill') (drum(120, 0.1, 0.08), noise(0.05, 0.05, 0, 1500));
+    else if (kind === 'bond') [523, 659, 784, 1046, 1318].forEach((f, i) => pluck(f, 0.6, 0.08, i * 0.07));
+    else if (kind === 'event') (gong(147, 1.6, 0.14), drum(60, 0.5, 0.3, 0.02));
+    else if (kind === 'heart') (drum(55, 0.18, 0.3), drum(50, 0.18, 0.22, 0.2));
+    else if (kind === 'win') [523, 659, 784, 1046].forEach((f, i) => (pluck(f, 0.7, 0.13, i * 0.13), i === 3 && gong(262, 1.8, 0.12, 0.4)));
+    else if (kind === 'lose') [392, 330, 294, 220].forEach((f, i) => pluck(f, 0.8, 0.11, i * 0.22));
+    else if (kind === 'bad') tone(160, 0.12, 'square', 0.05);
+    else if (kind === 'sell') (pluck(1175, 0.15, 0.07), pluck(1568, 0.2, 0.06, 0.06));
+    else if (kind === 'tap') pluck(1046, 0.08, 0.04);
   }
+  // 手机震动（安卓有效，iOS 忽略）
+  const buzz = (ms) => {
+    try {
+      if (!muted && navigator.vibrate) navigator.vibrate(ms);
+    } catch (e) {}
+  };
+
+  // ---------- 背景音乐：五声音阶程序生成（不需要音频文件） ----------
+  // 宫调式 D 宫：D E #F A B；菜单舒缓只拨弦，战斗加鼓点，决战时刻提速
+  const BGM = { on: false, next: 0, step: 0, timer: null, gain: null, mood: 'menu', last: 4 };
+  const PENTA = [0, 2, 4, 7, 9];
+  const noteHz = (deg, oct) => 146.83 * Math.pow(2, (PENTA[((deg % 5) + 5) % 5] + 12 * (oct + Math.floor(deg / 5))) / 12);
+  function bgmTick() {
+    if (!actx || !BGM.on) return;
+    const battle = BGM.mood !== 'menu', urgent = BGM.mood === 'urgent';
+    const spb = 60 / (urgent ? 112 : battle ? 92 : 72) / 2; // 八分音符
+    while (BGM.next < actx.currentTime + 0.25) {
+      const d = BGM.next - actx.currentTime, st = BGM.step % 16;
+      if (st === 0 || st === 8) pluck(noteHz(st === 0 ? 0 : 3, -1), 1.6, 0.11, d, BGM.gain);
+      if (battle && (st % 4 === 0)) drum(st % 8 === 0 ? 62 : 80, 0.25, st % 8 === 0 ? 0.22 : 0.12, d, BGM.gain);
+      if (urgent && st % 2 === 1) drum(110, 0.08, 0.06, d, BGM.gain);
+      if (Math.random() < (battle ? 0.55 : 0.4)) {
+        BGM.last = Math.max(0, Math.min(9, BGM.last + [-2, -1, -1, 0, 1, 1, 2][Math.floor(Math.random() * 7)]));
+        pluck(noteHz(BGM.last, 0), battle ? 0.5 : 0.9, battle ? 0.07 : 0.06, d, BGM.gain);
+      }
+      BGM.next += spb;
+      BGM.step++;
+    }
+  }
+  function setMusic(mood) {
+    BGM.mood = mood || BGM.mood;
+    const want = musicOn && !muted && !document.hidden;
+    if (!actx || want === BGM.on) return;
+    BGM.on = want;
+    if (want) {
+      if (!BGM.gain) (BGM.gain = actx.createGain()), BGM.gain.connect(bus);
+      BGM.gain.gain.setTargetAtTime(0.55, actx.currentTime, 0.5);
+      BGM.next = actx.currentTime + 0.1;
+      BGM.timer = setInterval(bgmTick, 100);
+    } else {
+      clearInterval(BGM.timer);
+      if (BGM.gain) BGM.gain.gain.setTargetAtTime(0, actx.currentTime, 0.2);
+    }
+  }
+  document.addEventListener('visibilitychange', () => setMusic());
+  // 浏览器要求用户点一下才能出声：第一次触摸时建好音频并开音乐
+  window.addEventListener('pointerdown', () => {
+    try {
+      audio();
+      if (actx.state === 'suspended') actx.resume();
+      setMusic();
+    } catch (e) {}
+  }, { passive: true });
 
   // ---------- 状态 ----------
   let screen = 'menu';
@@ -275,13 +396,27 @@
       if (d && d.side === 0 && (ev === 'place' || ev === 'recruit' || ev === 'sell' || ev === 'item')) actions++;
       if (ev === 'outpostLost' && d.side === 0) say('前哨失守！卡已退回备战席', 2);
       if (ev === 'recruit' && d.side === 0) (sfx('recruit'), (view.shopAnim = performance.now()));
-      if (ev === 'place' && d.side === 0) sfx(d.how === 'merge' ? 'merge' : 'place');
+      if (ev === 'place' && d.side === 0) {
+        sfx(d.how === 'merge' ? 'merge' : 'place');
+        buzz(d.how === 'merge' ? 18 : 8);
+        if (d.r != null && d.c != null) {
+          const rc = JQ.cellRect(0, d.r, d.c);
+          view.anims.push({ kind: 'drop', x: rc.cx, y: rc.cy, t0: performance.now(), life: 420, merge: d.how === 'merge', label: d.how === 'merge' && d.card ? `Lv${d.card.level}` : '' });
+        }
+      }
+      if (ev === 'kill' && d.side === 0) {
+        if (performance.now() - lastKillSfx > 90) (lastKillSfx = performance.now()), sfx('kill');
+        if (view.anims.length < 40) view.anims.push({ kind: 'bunfly', x: d.x, y: d.y, t0: performance.now() + Math.random() * 80, life: 650, coin: true });
+      }
+      if (ev === 'crit' && d.side === 0) sfx('crit');
+      if (ev === 'bond' && d.side === 0) (sfx('bond'), buzz(25));
+      if (ev === 'heroDie' && d.side === 1) buzz(20);
       if (ev === 'sell' && d.side === 0) (sfx('sell'), (view.bunPop = 0.3));
-      if (ev === 'hero') sfx('hero');
+      if (ev === 'hero') (sfx('hero'), d.side === 0 && ((view.punchAt = performance.now()), buzz(30)));
       if (ev === 'ult') sfx('ult');
       if (ev === 'skill' && d.side === 0) sfx('skill');
-      if (ev === 'baseHit' && d.side === 0 && performance.now() - lastHit > 250) (lastHit = performance.now()), sfx('hit');
-      if (ev === 'event') say(`天命【${d.name}】${d.desc}`, 4);
+      if (ev === 'baseHit' && d.side === 0 && performance.now() - lastHit > 250) (lastHit = performance.now()), sfx('hit'), buzz(12);
+      if (ev === 'event') (say(`天命【${d.name}】${d.desc}`, 4), sfx('event'));
       if (ev === 'wave' && d.n % 4 === 0) say(`第 ${d.n} 波：敌将来袭！`, 3);
       if (ev === 'over') {
         const r = rec(game.modeKey);
@@ -747,7 +882,7 @@
   const PACK_FOCUS = { sanguo: 0.55, xiyou: 0.62, song: 0.55 }; // 竖图裁成横幅时取景的高度位置（0 顶 ~ 1 底），默认 0.4
   for (const k of ['sanguo', 'xiyou', 'tang', 'song', 'custom']) {
     const im = new Image();
-    im.src = `img/pack_${k}.jpg?v=20261110b`;
+    im.src = `img/pack_${k}.jpg?v=20261110c`;
     PACK_ART[k] = im;
   }
   function choosePack(k) {
@@ -1020,7 +1155,7 @@
     iconBtn(x + w - 50, y - 14, 50, '×', () => (menuPop = null));
   }
   function drawSettingsPop() {
-    const x = 110, y = 400, w = 500, h = 360;
+    const x = 110, y = 380, w = 500, h = 440;
     popBase(x, y, w, h, '设 置');
     const row = (i, label, on, fn) => {
       const ry = y + 90 + i * 84;
@@ -1040,6 +1175,12 @@
     row(0, '音效', !muted, () => {
       muted = !muted;
       localStorage.setItem('jq_mute', muted ? '1' : '0');
+      setMusic();
+    });
+    row(3, '背景音乐', musicOn, () => {
+      musicOn = !musicOn;
+      localStorage.setItem('jq_music', musicOn ? '1' : '0');
+      setMusic();
     });
     row(1, '双击卖卡', dblSell, () => {
       dblSell = !dblSell;
@@ -1557,6 +1698,7 @@
     button(210, 652, 300, 72, muted ? '音效：关' : '音效：开', () => {
       muted = !muted;
       localStorage.setItem('jq_mute', muted ? '1' : '0');
+      setMusic();
     }, { size: 30 });
     button(210, 736, 300, 72, skillToast ? '技能弹字：开' : '技能弹字：关', () => {
       skillToast = !skillToast;
@@ -1931,6 +2073,8 @@
     g.setTransform(scale * dpr, 0, 0, scale * dpr, padX * scale * dpr, padY * scale * dpr);
     if (padX > 0) (g.fillStyle = '#1d1810'), g.fillRect(-padX, -padY, C.W + 2 * padX, C.H + 2 * padY); // 电脑横屏：两侧底色
     buttons = [];
+    const mood = screen === 'play' || screen === 'paused' ? (game && game.overtime ? 'urgent' : 'battle') : 'menu';
+    if (mood !== BGM.mood) setMusic(mood);
     if (screen === 'menu') drawMenu(dt);
     else if (screen === 'stages') drawStages();
     else if (screen === 'custom') drawCustom();
@@ -1963,7 +2107,10 @@
     }
     else {
       if (screen === 'play' && !game.over) {
-        acc += dt * view.speed;
+        // 打击停顿：大招/击杀英雄/英雄暴击时模拟放慢一小会儿，手感更“沉”
+        let slow = 1;
+        if (game.hitstop > 0) (slow = 0.12), (game.hitstop -= dt);
+        acc += dt * view.speed * slow;
         while (acc >= STEP) {
           if (!game.R.waves && (aiT -= STEP) <= 0) (JQ.aiThink(game, 1), (aiT = game.diff.think));
           if (AUTO && (autoT -= STEP) <= 0) (JQ.aiThink(game, 0), (autoT = JQ.DIFF.human.think));
@@ -1976,7 +2123,10 @@
         if (view.selectedCell && !view.selectedCell.card) view.selectedCell = null;
       }
       const nowMs = performance.now();
-      view.anims = view.anims.filter((a) => nowMs - a.t0 < 400);
+      for (const a of view.anims) if (a.coin && !a.done && nowMs - a.t0 >= 550) (a.done = true), (view.bunPop = 0.25), sfx('coin');
+      view.anims = view.anims.filter((a) => nowMs - a.t0 < (a.life || 400));
+      // 基地残血：心跳声
+      if (screen === 'play' && !game.over && !game.R.waves && game.sides[0].hp < game.sides[0].maxHp * 0.3 && nowMs - lastHeart > 1200) (lastHeart = nowMs), sfx('heart');
       JQ.render(game, view);
       if (screen === 'paused') drawPause();
       else if (screen === 'over') drawOver();

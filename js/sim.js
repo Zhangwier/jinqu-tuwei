@@ -147,6 +147,8 @@
       this.waveT = 10;
       this.eventT = 25;
       this.notices = []; // 天命事件提示卡（右侧）
+      this.hitstop = 0; // 打击停顿（秒，真实时间）：主循环在这段时间里放慢模拟
+      this.ultFocus = null; // 最近一次大招的位置/时间：画面聚光用
       this.sides = [new Side(0, this), new Side(1, this)];
       if (this.R.waves) {
         // 守关：上方没有对手经营，基地打不掉，冲到顶的兵算突围
@@ -400,7 +402,7 @@
       if (how) {
         this.afterBoardChange(s);
         if (how === 'merge' && isUnit) this.addCraftStack(s, r2, c2);
-        this.emit('place', { side: sid, how, r: r2, c: c2 });
+        this.emit('place', { side: sid, how, r: r2, c: c2, card: s.board.cell(r2, c2).card });
       }
       return how;
     }
@@ -1097,7 +1099,11 @@
       let crit = false;
       if (!opts.dot) {
         const critP = (SP.crit || 0) + ((src && src.bondCrit) || 0);
-        if (critP && this.rand() < critP) (mult *= SP.critMult || 2), (crit = true);
+        if (critP && this.rand() < critP) {
+          mult *= SP.critMult || 2;
+          crit = true;
+          if (src && src.isHero) (this.hitstop = Math.max(this.hitstop, 0.035)), this.emit('crit', { side: src.side });
+        }
         if (SP.heroBonus && t.isHero) mult *= 1 + SP.heroBonus;
         if (SP.longShot && Math.hypot(t.x - src.x, t.y - src.y) > 160) mult *= 1 + SP.longShot;
         if (SP.rage) mult *= 1 + SP.rage * (1 - src.hp / src.maxHp);
@@ -1177,6 +1183,8 @@
       if (src && src.key && src.side === killer.id) killer.stats.heroKills[src.key] = (killer.stats.heroKills[src.key] || 0) + 1;
       killer.buns += (t.isHero && !t.clone ? C.HERO_KILL_BUNS : C.KILL_BUNS) + (killer.T.killBuns || 0);
       this.addFx({ kind: 'ink', x: t.x, y: t.y, life: 0.9, side: t.side, big: t.isHero, text: t.key });
+      this.emit('kill', { side: killer.id, x: t.x, y: t.y, hero: t.isHero && !t.clone });
+      if (t.isHero && !t.clone) this.hitstop = Math.max(this.hitstop, 0.14);
       if (t.deathBlast && this.rand() < t.deathBlast) {
         for (const f of this.units) if (f.side !== t.side && f.hp > 0 && !f.isOutpost && Math.hypot(f.x - t.x, f.y - t.y) < 70) this.damage(null, f, 60 + t.maxHp * 0.3, { skill: true });
         this.addFx({ kind: 'meteor', x: t.x, y: t.y, r: 70, color: '#ff6020', life: 0.6, t: 0 });
@@ -1336,6 +1344,8 @@
       u.ultT = d.ult.cd * (u.ultCdMult || 1) * (u.bondCd || 1);
       u.anim = 0.4;
       this.shake = Math.max(this.shake, 8);
+      this.hitstop = Math.max(this.hitstop, 0.09);
+      this.ultFocus = { x: u.x, y: u.y, t: this.time, side: u.side };
       if (this.skillToast) this.addFx({ kind: 'banner', x: C.W / 2, y: u.side === 0 ? 700 : 470, text: d.ult.name, hero: d.name, color: d.aura, side: u.side, life: 1.5 });
       this.addFx({ kind: 'ring', x: u.x, y: u.y, r: 110, life: 0.7, color: d.aura });
       this.emit('ult', { side: u.side, name: d.name, ult: d.ult.name });
