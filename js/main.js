@@ -620,9 +620,10 @@
   const menuView = { g, speed: 1, selected: -1, anims: [], noHud: true }; // 背景演示局不画 HUD
   const MENU_PACKS = ['sanguo', 'xiyou', 'tang', 'custom', 'xuanhuan', 'mofa', 'song'];
   const PACK_ART = {}; // 卡包封面图（AI 生图），没有的卡包画大字
-  for (const k of ['sanguo', 'tang']) {
+  const PACK_FOCUS = { sanguo: 0.55, xiyou: 0.62 }; // 竖图裁成横幅时取景的高度位置（0 顶 ~ 1 底），默认 0.4
+  for (const k of ['sanguo', 'xiyou', 'tang']) {
     const im = new Image();
-    im.src = `img/pack_${k}.jpg?v=20261109p`;
+    im.src = `img/pack_${k}.jpg?v=20261109q`;
     PACK_ART[k] = im;
   }
   function choosePack(k) {
@@ -906,7 +907,7 @@
       if (art && art.complete && art.naturalWidth) {
         const s = Math.max(cw / art.naturalWidth, ch / art.naturalHeight);
         const iw = art.naturalWidth * s, ih = art.naturalHeight * s;
-        g.drawImage(art, cx + (cw - iw) / 2, cy + (ch - ih) * 0.4, iw, ih);
+        g.drawImage(art, cx + (cw - iw) / 2, cy + (ch - ih) * (PACK_FOCUS[k] || 0.4), iw, ih);
       } else {
         g.fillStyle = locked ? '#2a241c' : '#5a3d22';
         g.fillRect(cx, cy, cw, ch);
