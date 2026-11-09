@@ -79,7 +79,7 @@
       this.refreshes = 0;
       this.tileDry = 0; // 连续多少次刷新没看到格子
       this.xiaGiven = 0; // 自定义包带夏夏时，前两张文字卡保底给夏
-      this.xiaCraft = 0; // 夏夏本局已触发的“造物”次数，最多 3 次
+      this.craftStacks = 0; // 夏夏「巧手」层数：棋盘每合成一次 +1，最多 12 层
       this.incomeMult = T.income;
       this.heroAlive = {};
       this.heroCd = {};
@@ -337,6 +337,21 @@
       return true;
     }
 
+    // 夏夏：棋盘上每合成一次小兵，全军小兵 +3% 攻击/血量，最多 12 层
+    addCraftStack(s, r, c) {
+      if (!s.heroAlive['夏夏'] || s.craftStacks >= 12) return;
+      s.craftStacks++;
+      const k = 1.03;
+      for (const u of this.units) {
+        if (u.side !== s.id || u.isHero || u.isOutpost || u.hp <= 0) continue;
+        u.atk *= k;
+        u.maxHp *= k;
+        u.hp *= k;
+      }
+      const rc = JQ.cellRect(s.id, r, c);
+      this.addFx({ kind: 'text', x: rc.cx, y: rc.cy + 24, text: `巧手 ${s.craftStacks}/12`, color: HEROES['夏夏'].aura, life: 0.8, size: 14 });
+    }
+
     // 从招兵栏拿卡：放到格子 / 拼格子块 / 直接使用道具
     // allowReplace：落到场上不同的卡上时顶替它，被换下的卡回到这个备战席位
     take(sid, si, r, c, allowReplace) {
@@ -355,6 +370,7 @@
       if (!how) return null;
       s.shop[si] = old || null;
       this.afterBoardChange(s);
+      if (how === 'merge' && card.kind === 'unit') this.addCraftStack(s, r, c);
       this.emit('place', { side: sid, how, r, c, card });
       return how;
     }
@@ -362,9 +378,12 @@
     move(sid, r1, c1, r2, c2) {
       const s = this.sides[sid];
       if (this.over) return null;
+      const from = s.board.cell(r1, c1);
+      const isUnit = !!(from && from.card && from.card.kind === 'unit');
       const how = s.board.move(r1, c1, r2, c2);
       if (how) {
         this.afterBoardChange(s);
+        if (how === 'merge' && isUnit) this.addCraftStack(s, r2, c2);
         this.emit('place', { side: sid, how, r: r2, c: c2 });
       }
       return how;
@@ -679,11 +698,12 @@
       const d = UNITS[key];
       const T = s.T;
       const stage = T.stageBoost || 1;
+      const craft = 1 + 0.03 * (s.craftStacks || 0);
       const m = JQ.levelMult(level);
       const u = {
         id: nextUnitId++, side: s.id, key, isHero: false, level,
         x: x + (this.rand() - 0.5) * 8, y: this.spawnY(s.id) + (this.rand() - 0.5) * 8,
-        hp: d.hp * m * T.unitHp * stage, maxHp: d.hp * m * T.unitHp * stage, atk: d.atk * m * s.atkMult() * T.unitAtk * T.allAtk * stage, range: d.range, rate: d.rate, speed: d.speed * T.unitSpeed,
+        hp: d.hp * m * T.unitHp * stage * craft, maxHp: d.hp * m * T.unitHp * stage * craft, atk: d.atk * m * s.atkMult() * T.unitAtk * T.allAtk * stage * craft, range: d.range, rate: d.rate, speed: d.speed * T.unitSpeed,
         ranged: !!d.ranged, assassin: !!d.assassin, magic: !!d.magic, bonus: d.bonus || null, rangedReduce: d.rangedReduce || 0, healAura: d.healAura || null,
         r: 14, atkT: 0.3, retarget: 0, target: null, stun: 0, shield: 0, anim: 0, flash: 0, born: this.time, kx: 0, ky: 0,
       };
@@ -836,13 +856,7 @@
           if (this.move(s.id, a.r, a.c, b.r, b.c) === 'merge') {
             this.addFx({ kind: 'ring', x: rc.cx, y: rc.cy, r: 38, life: 0.5, color: HEROES['夏夏'].aura });
             this.addFx({ kind: 'text', x: rc.cx, y: rc.cy - 26, text: '巧手', color: HEROES['夏夏'].aura, life: 0.7, size: 16 });
-            // 巧手造物：合成后额外召出一个同等级单位，每局最多 3 次
-            const merged = b.card;
-            if (merged && merged.kind === 'unit' && s.xiaCraft < 3 && s.unitCap(merged.key) > s.aliveCount(merged.key)) {
-              s.xiaCraft++;
-              this.spawnUnit(s, merged.key, merged.level, rc.cx, { y: rc.cy, bonusSpawn: true });
-              this.addFx({ kind: 'text', x: rc.cx, y: rc.cy + 26, text: `造物 ${s.xiaCraft}/3`, color: HEROES['夏夏'].aura, life: 0.8, size: 14 });
-            }
+            // 层数由 Game.move 统一处理（手动合成也生效）
           }
         } else {
           // 场上没有可合的，就合备战席（同样走拖动合成的规则）

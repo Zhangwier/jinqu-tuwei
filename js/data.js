@@ -281,7 +281,7 @@
       ult: { name: '渔阳鼙鼓', cd: 17, desc: '召来 5 名精兵，周围 2.2 倍伤害', do: [{ t: 'summon', unit: ['刺', '枪'], n: 5, fx: 'portal' }, { t: 'aoe', at: 'self', r: 130, mult: 2.2, fx: 'warcry', big: true }] } }),
     // ===== 自定义专属 =====
     H('夏夏', 'custom', { role: '特殊', hp: 1200, atk: 36, range: 170, rate: 1.0, speed: 48, cd: 16, ranged: true, magic: true, aura: '#ffd166',
-      passive: { name: '巧手', desc: '每 1 秒自动合成两张同级小兵；棋盘上合成时额外召出一个合成单位（每局最多 3 次）', autoMerge: { every: 1 } },
+      passive: { name: '巧手', desc: '每 1 秒自动合成两张同级小兵；棋盘上每合成一次，全军小兵攻击和血量 +3%（最多 12 层）', autoMerge: { every: 1 } },
       skill: { name: '飞针', cd: 7, desc: '飞针点穴，2.2 倍伤害并眩晕 1.5 秒', do: [{ t: 'stunTarget', mult: 2.2, dur: 1.5, fx: 'pulse' }] },
       ult: { name: '天工开物', cd: 17, desc: '全军（含自己）获 20% 护盾，攻击 +30% 持续 6 秒', do: [{ t: 'shield', allies: 0.2, r: 300 }, { t: 'buff', r: 300, atk: 1.3, dur: 6, fx: 'warcry', text: '天工' }] } }),
   ].forEach((h) => (HEROES[h.name] = h));
