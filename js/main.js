@@ -670,7 +670,7 @@
   const PACK_FOCUS = { sanguo: 0.55, xiyou: 0.62 }; // 竖图裁成横幅时取景的高度位置（0 顶 ~ 1 底），默认 0.4
   for (const k of ['sanguo', 'xiyou', 'tang', 'custom']) {
     const im = new Image();
-    im.src = `img/pack_${k}.jpg?v=20261109r`;
+    im.src = `img/pack_${k}.jpg?v=20261109s`;
     PACK_ART[k] = im;
   }
   function choosePack(k) {

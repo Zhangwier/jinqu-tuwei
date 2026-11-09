@@ -330,6 +330,14 @@ const card = (k, key, lv) => JQ.makeCard(k, key, lv);
     assert.deepStrictEqual(got.slice(0, 2), ['夏', '夏'], '前两张文字卡保底夏');
     const gf = new JQ.Game({ seed: 22, pack: 'custom', mode: 'fate' });
     assert.ok(gf.sides[0].board.links.some((l) => l.hero === '夏夏'), '天命开局英雄为夏夏');
+    // 开局已送夏夏：不再强制给「夏」
+    assert.strictEqual(gf.sides[0].xiaGiven, 2, '天命送了夏夏后不再保底夏');
+    let forced = 0;
+    for (let i = 0; i < 400; i++) {
+      const c = gf.rollCard(0);
+      if (c.kind === 'char' && c.key === '夏') forced++;
+    }
+    assert.ok(forced < 20, `天命开局有夏夏时，夏字不再刷屏（${forced}/400）`);
   }
   // 连续 7 次没格子时保底一块
   {

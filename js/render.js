@@ -41,7 +41,7 @@
     coin: [175, 600, 164, 164], bun: [341, 600, 168, 141], lock: [511, 600, 170, 164], chest: [683, 600, 196, 158],
   };
   const uiImg = new Image();
-  uiImg.src = 'img/ui.webp?v=20261109r';
+  uiImg.src = 'img/ui.webp?v=20261109s';
   const uiOk = () => uiImg.complete && uiImg.naturalWidth > 0;
   JQ.uiOk = uiOk;
   // 整张贴（图标），按宽高缩放
@@ -1492,12 +1492,19 @@
     text(g, game.R.waves ? `第 ${game.wave} 波` : `第 ${game.stage} 关`, 66, 25, 19, '#ffe9a0', { align: 'left', stroke: '#2a1a08', strokeW: 4 });
     text(g, game.mode.name + ' · ' + game.diff.name, 66, 40, 10, '#d8c8a0', { align: 'left', font: 'sans-serif', bold: false });
     if (game.R.events) {
-      const m = game.mods;
-      const act = [];
-      if (m.rageUntil > game.time) act.push(`杀气 ${Math.ceil(m.rageUntil - game.time)}s`);
-      if (m.swiftUntil > game.time) act.push(`神行 ${Math.ceil(m.swiftUntil - game.time)}s`);
-      if (m.freeUntil > game.time) act.push(`免费招兵 ${Math.ceil(m.freeUntil - game.time)}s`);
-      text(g, (act.length ? act.join(' ') + ' · ' : '') + `下次天命 ${Math.ceil(game.eventT)}s`, C.W - 12, 64, 13, '#7a1a10', { align: 'right', font: 'sans-serif' });
+      // 下次天命倒计时：小圆环
+      const k = 1 - game.eventT / 25;
+      g.save();
+      g.fillStyle = 'rgba(25,16,8,0.62)';
+      rr(g, 568, 50, 88, 24, 12);
+      g.fill();
+      g.strokeStyle = '#ffd23f';
+      g.lineWidth = 2.5;
+      g.beginPath();
+      g.arc(583, 62, 7, -Math.PI / 2, -Math.PI / 2 + TAU * k);
+      g.stroke();
+      text(g, `天命 ${Math.ceil(game.eventT)}s`, 622, 63, 12, game.eventT < 4 ? '#ffd23f' : '#e8dcc0', { font: 'sans-serif' });
+      g.restore();
     }
     g.restore();
     g.save();
@@ -1523,6 +1530,7 @@
       text(g, '决战时刻 · 伤害翻倍', C.W / 2, 330, 26, '#b01c10', { stroke: '#f5e6c0', strokeW: 5 });
       g.restore();
     }
+    if (game.R.events) drawEventHud(g, game, t);
     // 包子
     const bun = UI.bun;
     if (view.target && view.target.sell) {
@@ -1623,7 +1631,8 @@
     const bv = game.benchValue(0);
     text(g, bv ? `卖备战席 +${bv}` : '整排刷新', rb.x + rb.w / 2, rb.y + 48, 12, '#6a4a20', { font: 'sans-serif', bold: false });
     if (!JQ.uiDraw(g, 'bun', rb.x + rb.w / 2 - 33, rb.y + 61, 24, 20)) drawBun(g, rb.x + rb.w / 2 - 20, rb.y + 70, 10);
-    text(g, String(s.recruitCost()), rb.x + rb.w / 2 + 10, rb.y + 71, 18, s.buns >= s.recruitCost() ? '#3a2a10' : '#b02010', { font: 'sans-serif' });
+    if (game.mods && game.mods.freeUntil > game.time) text(g, '免费', rb.x + rb.w / 2 + 12, rb.y + 71, 18, '#b0200c', { stroke: '#fff3c0', strokeW: 3 });
+    else text(g, String(s.recruitCost()), rb.x + rb.w / 2 + 10, rb.y + 71, 18, s.buns >= s.recruitCost() ? '#3a2a10' : '#b02010', { font: 'sans-serif' });
     g.restore();
 
     if (view.info) {
@@ -1631,6 +1640,86 @@
       g.globalAlpha = Math.min(1, view.infoT * 2);
       text(g, view.info, C.W / 2, UI.info.y, 17, '#ffeec0', { stroke: 'rgba(0,0,0,0.6)', strokeW: 4 });
       g.restore();
+    }
+  }
+
+  // 天命事件：持续效果的全屏氛围 + 右侧提示卡（持续类显示到结束，瞬发类 5 秒）
+  let rageGrad = null;
+  function drawEventHud(g, game, t) {
+    const m = game.mods, T = game.time;
+    const fieldTop = JQ.baseLine(1), fieldBot = JQ.baseLine(0);
+    if (m.rageUntil > T) {
+      // 杀气：血色边缘脉动
+      if (!rageGrad) {
+        rageGrad = g.createRadialGradient(C.W / 2, 585, 240, C.W / 2, 585, 760);
+        rageGrad.addColorStop(0, 'rgba(200,20,0,0)');
+        rageGrad.addColorStop(1, 'rgba(200,30,0,0.75)');
+      }
+      g.save();
+      g.globalAlpha = Math.min(1, (m.rageUntil - T) / 1.5) * (0.28 + Math.sin(t * 5) * 0.1);
+      g.fillStyle = rageGrad;
+      g.fillRect(-VIEW.padX, -VIEW.padY, C.W + 2 * VIEW.padX, C.H + 2 * VIEW.padY);
+      g.restore();
+    }
+    if (m.swiftUntil > T) {
+      // 神行：横向风痕
+      g.save();
+      g.globalAlpha = Math.min(1, (m.swiftUntil - T) / 1.5) * 0.5;
+      g.strokeStyle = '#bfeaff';
+      g.lineWidth = 2;
+      g.lineCap = 'round';
+      for (let i = 0; i < 14; i++) {
+        const y = fieldTop + 30 + ((i * 97) % (fieldBot - fieldTop - 60));
+        const x = (((t * (300 + (i % 4) * 90) + i * 173) % (C.W + 300)) - 150);
+        g.beginPath();
+        g.moveTo(x, y);
+        g.lineTo(x + 60 + (i % 3) * 30, y);
+        g.stroke();
+      }
+      g.restore();
+    }
+    const ns = game.notices || [];
+    let y = fieldTop + 24;
+    for (const n of ns) {
+      const age = T - n.t0, left = n.until - T;
+      if (left < -0.5) continue;
+      const inK = Math.min(1, age / 0.3), outK = left < 0 ? -left / 0.5 : 0;
+      const w = 232, h = 66, x = C.W - w - 8 + (1 - ease(inK)) * (w + 20);
+      const col = n.ev.color || '#ffd23f';
+      g.save();
+      g.globalAlpha = 1 - outK;
+      g.fillStyle = 'rgba(22,14,6,0.84)';
+      rr(g, x, y, w, h, 12);
+      g.fill();
+      g.strokeStyle = col;
+      g.lineWidth = 2;
+      g.stroke();
+      // 刚出现时闪一下
+      if (age < 0.6) {
+        g.globalAlpha = (1 - outK) * (1 - age / 0.6) * 0.6;
+        g.fillStyle = col;
+        rr(g, x, y, w, h, 12);
+        g.fill();
+        g.globalAlpha = 1 - outK;
+      }
+      g.fillStyle = col;
+      g.beginPath();
+      g.arc(x + 32, y + h / 2, 22, 0, TAU);
+      g.fill();
+      text(g, n.ev.icon || '命', x + 32, y + h / 2 + 1, 26, '#1a1008');
+      text(g, n.ev.name, x + 62, y + 20, 18, col, { align: 'left', stroke: '#000', strokeW: 3 });
+      text(g, n.ev.desc, x + 62, y + 44, Math.min(12, (w - 74) / (n.ev.desc.length * 0.92)), '#f0e4c8', { align: 'left', font: 'sans-serif', bold: false });
+      if (n.ev.dur) {
+        const f = Math.max(0, left / n.ev.dur);
+        g.fillStyle = 'rgba(255,255,255,0.15)';
+        g.fillRect(x + 62, y + h - 10, w - 74, 4);
+        g.fillStyle = col;
+        g.fillRect(x + 62, y + h - 10, (w - 74) * f, 4);
+        text(g, `${Math.max(0, Math.ceil(left))}s`, x + w - 10, y + 20, 13, '#fff3d6', { align: 'right', font: 'sans-serif' });
+      }
+      if (n.lucky >= 0) text(g, n.lucky === 0 ? '天命所归·只利我方' : '天命所归·只利敌方', x + w - 10, y + 44, 10, '#ffcf5a', { align: 'right', font: 'sans-serif', bold: false });
+      g.restore();
+      y += h + 8;
     }
   }
 

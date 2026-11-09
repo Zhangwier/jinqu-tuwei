@@ -516,13 +516,14 @@
 
   // 天命事件：fn(game) 生效
   JQ.EVENTS = [
-    { name: '天降甘霖', desc: '双方各得 30 包子' },
-    { name: '神兵天降', desc: '双方备战席各得一张 3 级兵卡' },
-    { name: '瘟疫横行', desc: '场上所有单位损失 40% 血量' },
-    { name: '杀气冲天', desc: '15 秒内所有单位伤害 ×1.6' },
-    { name: '神行太保', desc: '15 秒内主角移速翻倍' },
-    { name: '天雷滚滚', desc: '天雷随机劈落 10 次，不分敌我' },
-    { name: '招贤纳士', desc: '15 秒内招兵免费' },
+    // dur：效果持续秒数（右侧提示卡显示到结束）；瞬发事件提示卡留 5 秒。icon 是提示卡上的字，color 是主色
+    { name: '天降甘霖', desc: '双方各得 30 包子', icon: '霖', color: '#f0c040' },
+    { name: '神兵天降', desc: '双方备战席各得一张 3 级兵卡', icon: '兵', color: '#ffd23f' },
+    { name: '瘟疫横行', desc: '场上所有单位损失 40% 血量', icon: '疫', color: '#8fc23a' },
+    { name: '杀气冲天', desc: '所有单位伤害 ×1.6', dur: 15, icon: '杀', color: '#ff4a2a' },
+    { name: '神行太保', desc: '主角移速翻倍', dur: 15, icon: '行', color: '#5ac8ff' },
+    { name: '天雷滚滚', desc: '天雷随机劈落 10 次，不分敌我', icon: '雷', color: '#9ad8ff' },
+    { name: '招贤纳士', desc: '招兵免费', dur: 15, icon: '贤', color: '#ffcf5a' },
   ];
 
   JQ.levelMult = (lv) => 1 + 0.35 * (lv - 1);

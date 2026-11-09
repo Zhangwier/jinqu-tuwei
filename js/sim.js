@@ -141,6 +141,7 @@
       this.wave = 0;
       this.waveT = 10;
       this.eventT = 25;
+      this.notices = []; // 天命事件提示卡（右侧）
       this.sides = [new Side(0, this), new Side(1, this)];
       if (this.R.waves) {
         // 守关：上方没有对手经营，基地打不掉，冲到顶的兵算突围
@@ -155,6 +156,7 @@
             // 自定义包带夏夏时，玩家开局送的英雄固定为夏夏
             if (s.id === 0 && JQ.heroInPack('夏夏', s.pack) && names.includes('夏夏')) {
               names.splice(names.indexOf('夏夏'), 1);
+              s.xiaGiven = 2; // 开局已经送了夏夏，前两张字不再强制给「夏」
               return '夏夏';
             }
             return names.splice(Math.floor(this.rand() * names.length), 1)[0];
@@ -277,7 +279,7 @@
       }
       const s = this.sides[sid];
       // 自定义包带夏夏：前两张文字卡必出「夏」，方便尽早成夏夏
-      if (p.kind === 'char' && JQ.heroInPack('夏夏', s.pack) && s.xiaGiven < 2) {
+      if (p.kind === 'char' && JQ.heroInPack('夏夏', s.pack) && s.xiaGiven < 2 && !s.heroAlive['夏夏'] && this.charCount(s, '夏') < 2) {
         s.xiaGiven++;
         return JQ.makeCard('char', '夏', 1);
       }
@@ -1604,6 +1606,14 @@
       this.emit('wave', { n });
     }
 
+    // 某个字在棋盘 + 备战席上一共有几张
+    charCount(s, ch) {
+      let n = 0;
+      for (const x of s.board.all()) if (x.card && x.card.kind === 'char' && x.card.key === ch) n++;
+      for (const c of s.shop) if (c && c.kind === 'char' && c.key === ch) n++;
+      return n;
+    }
+
     // ---------- 天命事件 ----------
     fireEvent() {
       this.eventT = 25;
@@ -1616,7 +1626,12 @@
       const hurts = (u) => !lucky || u.side !== lucky.id;
       switch (ev.name) {
         case '天降甘霖':
-          for (const s of this.sides) if (gets(s)) s.buns += 30;
+          for (const s of this.sides) {
+            if (!gets(s)) continue;
+            s.buns += 30;
+            this.addFx({ kind: 'evRain', x: C.W / 2, y: JQ.baseLine(s.id) + (s.id === 0 ? 120 : -120), w: 520, life: 2.2 });
+            this.addFx({ kind: 'text', x: C.W / 2, y: JQ.baseLine(s.id) + (s.id === 0 ? 40 : -40), text: '+30 包子', color: '#ffd23f', life: 1.6, size: 26 });
+          }
           break;
         case '神兵天降': {
           for (const s of this.sides.filter(gets)) {
@@ -1624,10 +1639,12 @@
             let slot = s.shop.findIndex((c) => !c);
             if (slot < 0) slot = Math.floor(this.rand() * C.SHOP_SIZE);
             s.shop[slot] = JQ.makeCard('unit', keys[Math.floor(this.rand() * keys.length)], 3);
+            this.addFx({ kind: 'evPillar', x: C.W / 2, y: JQ.baseLine(s.id), life: 1.4 });
           }
           break;
         }
         case '瘟疫横行':
+          this.addFx({ kind: 'evFog', x: C.W / 2, y: (L.E_BOTTOM + L.P_TOP) / 2, life: 2.6 });
           for (const u of this.units.filter(hurts)) {
             if (u.isOutpost) continue;
             u.hp *= 0.6;
@@ -1636,6 +1653,8 @@
           break;
         case '杀气冲天':
           this.mods.rageUntil = T + 15;
+          this.addFx({ kind: 'evRage', x: C.W / 2, y: (L.E_BOTTOM + L.P_TOP) / 2, life: 1.2 });
+          this.shake = Math.max(this.shake, 6);
           break;
         case '神行太保':
           this.mods.swiftUntil = T + 15;
@@ -1648,6 +1667,7 @@
               const f = us[Math.floor(this.rand() * us.length)];
               this.damage(null, f, 120, { skill: true });
               this.addFx({ kind: 'bolt', x: f.x, y: f.y, life: 0.4, color: '#9ad8ff', big: true });
+              this.addFx({ kind: 'evFlash', x: f.x, y: f.y, life: 0.18 });
               this.shake = Math.max(this.shake, 3);
             });
           break;
@@ -1657,7 +1677,11 @@
       }
       this.mods.event = ev;
       this.mods.eventAt = T;
-      this.addFx({ kind: 'banner', x: C.W / 2, y: 585, hero: '天命', text: ev.name, color: '#ffd23f', side: 0, life: 1.8 });
+      // 右侧提示卡：持续类显示到效果结束，瞬发类留 5 秒
+      this.notices = (this.notices || []).filter((n) => n.until > T);
+      this.notices.push({ ev, t0: T, until: T + (ev.dur || 5), lucky: lucky ? lucky.id : -1 });
+      if (this.notices.length > 4) this.notices.shift();
+      this.addFx({ kind: 'banner', x: C.W / 2, y: 585, hero: '天命', text: ev.name, color: ev.color || '#ffd23f', side: 0, life: 2.2 });
       this.emit('event', ev);
     }
 

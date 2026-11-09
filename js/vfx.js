@@ -868,6 +868,69 @@
     }
   };
 
+  // ---------- 天命事件 ----------
+  // 天降甘霖：金色雨点 + 铜钱从天而降，落在 f.x,f.y 一带（宽 f.w）
+  VFX.evRain = function (g, f, k) {
+    const rnd = seed(f, 3), a = fadeOut(k, 0.7);
+    for (let i = 0; i < 46; i++) {
+      const x0 = f.x + (rnd() - 0.5) * (f.w || 600), d = rnd(), sp = 0.6 + rnd() * 0.6;
+      const y = f.y - 420 + ((k * sp * 1.6 + d) % 1) * 460;
+      g.globalAlpha = a * 0.85;
+      if (i % 5 === 0) {
+        g.fillStyle = '#f0c040';
+        g.beginPath();
+        g.arc(x0, y, 6, 0, TAU);
+        g.fill();
+        g.fillStyle = '#7a5010';
+        g.fillRect(x0 - 2, y - 2, 4, 4);
+      } else {
+        g.strokeStyle = 'rgba(255,225,140,0.9)';
+        g.lineWidth = 2;
+        g.beginPath();
+        g.moveTo(x0, y);
+        g.lineTo(x0 - 3, y + 16);
+        g.stroke();
+      }
+    }
+  };
+  // 神兵天降：金色光柱落地 + 地面光环
+  VFX.evPillar = function (g, f, k) {
+    const a = fadeOut(k, 0.55), drop = ease(Math.min(1, k * 3));
+    const top = f.y - 520 * drop;
+    const grd = g.createLinearGradient(0, top, 0, f.y);
+    grd.addColorStop(0, A('#fff3c0', 0));
+    grd.addColorStop(1, A('#ffd23f', 0.75 * a));
+    g.fillStyle = grd;
+    const w = 46 * (1 - k * 0.5);
+    g.fillRect(f.x - w / 2, top, w, f.y - top);
+    glowDot(g, f.x, f.y, 70 * (0.6 + k), '#ffd23f', '#fffbe0');
+    groundRing(g, f.x, f.y, 40 + 140 * ease(k), '#ffd23f', 6 * (1 - k) + 1, a);
+  };
+  // 瘟疫横行：绿色毒雾从中线往两边漫开
+  VFX.evFog = function (g, f, k) {
+    const rnd = seed(f, 5), a = Math.sin(Math.min(1, k) * Math.PI) * 0.55;
+    for (let i = 0; i < 18; i++) {
+      const x = rnd() * 720, y0 = f.y + (rnd() - 0.5) * 520, r = 60 + rnd() * 90;
+      const y = y0 + (rnd() - 0.5) * 80 * k;
+      g.globalAlpha = a;
+      glowDot(g, x, y, r * (0.6 + 0.6 * k), '#5f8a2a', '#9fd04a');
+    }
+  };
+  // 杀气冲天：中心爆出血色冲击波
+  VFX.evRage = function (g, f, k) {
+    const a = fadeOut(k, 0.3);
+    groundRing(g, f.x, f.y, 60 + 520 * ease(k), '#ff3a20', 14 * (1 - k) + 2, a);
+    groundRing(g, f.x, f.y, 30 + 360 * ease(k), '#ffb040', 6 * (1 - k) + 1, a);
+    g.globalAlpha = a * 0.5;
+    glowDot(g, f.x, f.y, 160 * (1 - k * 0.5), '#ff3a20', '#ffd0a0');
+  };
+  // 天雷：整场一闪白
+  VFX.evFlash = function (g, f, k) {
+    g.globalAlpha = (1 - k) * 0.35;
+    g.fillStyle = '#e8f4ff';
+    g.fillRect(-400, -400, 1520, 2080);
+  };
+
   JQ.VFX = VFX;
 
   // ---------- 飞行道具 ----------
