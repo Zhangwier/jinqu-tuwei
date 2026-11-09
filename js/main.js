@@ -35,6 +35,7 @@
   let noGlow = false;
   function setNoGlow() {
     noGlow = true;
+    JQ.lowFx = true; // 技能素材特效也一起关掉
     Object.defineProperty(g, 'shadowBlur', { configurable: true, get: () => 0, set: () => {} });
   }
   if (/[?&]lowfx=1/.test(location.search)) setNoGlow(); // 调试：直接开低画质
@@ -743,10 +744,10 @@
   const menuView = { g, speed: 1, selected: -1, anims: [], noHud: true }; // 背景演示局不画 HUD
   const MENU_PACKS = ['sanguo', 'xiyou', 'tang', 'custom', 'xuanhuan', 'mofa', 'song'];
   const PACK_ART = {}; // 卡包封面图（AI 生图），没有的卡包画大字
-  const PACK_FOCUS = { sanguo: 0.55, xiyou: 0.62 }; // 竖图裁成横幅时取景的高度位置（0 顶 ~ 1 底），默认 0.4
-  for (const k of ['sanguo', 'xiyou', 'tang', 'custom']) {
+  const PACK_FOCUS = { sanguo: 0.55, xiyou: 0.62, song: 0.55 }; // 竖图裁成横幅时取景的高度位置（0 顶 ~ 1 底），默认 0.4
+  for (const k of ['sanguo', 'xiyou', 'tang', 'song', 'custom']) {
     const im = new Image();
-    im.src = `img/pack_${k}.jpg?v=20261110a`;
+    im.src = `img/pack_${k}.jpg?v=20261110b`;
     PACK_ART[k] = im;
   }
   function choosePack(k) {
@@ -865,16 +866,20 @@
     // 主公等级 + 关卡星 + 万能将魂
     {
       const bx = 84, by = top + 22;
-      text(g, `主公 Lv${prog.lv}`, bx, by + 6, 17, '#ffe9a0', { align: 'left', stroke: '#2a1a08', strokeW: 3 });
+      if (JQ.ui2Draw(g, 'badge', bx - 4, by - 14, 34, 39)) text(g, String(prog.lv), bx + 13, by + 4, 15, '#5a1a08');
+      text(g, `主公 Lv${prog.lv}`, bx + 36, by + 6, 17, '#ffe9a0', { align: 'left', stroke: '#2a1a08', strokeW: 3 });
       g.save();
-      JQ.rr(g, bx, by + 20, 150, 7, 3.5);
+      JQ.rr(g, bx + 36, by + 20, 130, 7, 3.5);
       g.fillStyle = 'rgba(255,255,255,0.15)';
       g.fill();
-      JQ.rr(g, bx, by + 20, Math.max(4, (150 * prog.xp) / lvNeed(prog.lv)), 7, 3.5);
+      JQ.rr(g, bx + 36, by + 20, Math.max(4, (130 * prog.xp) / lvNeed(prog.lv)), 7, 3.5);
       g.fillStyle = '#e6b04a';
       g.fill();
       g.restore();
-      text(g, `★ ${totalStars()}   魂 ${prog.wild}`, bx + 250, by + 6, 15, '#ffd23f', { align: 'left', font: 'sans-serif', stroke: '#2a1a08', strokeW: 3 });
+      const sOk = JQ.ui2Draw(g, 'star_on', bx + 236, by - 6, 22, 21);
+      JQ.ui2Draw(g, 'soul', bx + 302, by - 8, 14, 25);
+      text(g, (sOk ? '' : '★ ') + `${totalStars()}`, bx + 260, by + 6, 15, '#ffd23f', { align: 'left', font: 'sans-serif', stroke: '#2a1a08', strokeW: 3 });
+      text(g, (sOk ? '' : '魂 ') + `${prog.wild}`, bx + 320, by + 6, 15, '#9fd8ff', { align: 'left', font: 'sans-serif', stroke: '#2a1a08', strokeW: 3 });
       text(g, `下个宝箱 ${10 - (totalStars() % 10)} 星`, bx + 250, by + 25, 11, '#d8c8a0', { align: 'left', font: 'sans-serif', bold: false });
     }
     title('禁区突围', 110, 92, '#1a1a1a');
@@ -1721,7 +1726,8 @@
     veil(Math.min(0.5, k * 1.5));
     const px = 50, py = 150, pw = 620, ph = 930;
     // 赢：背后金色光芒慢转 + 花瓣飘落
-    if (win) {
+    JQ.fxBudgetReset();
+    if (win && !JQ.fxSprite(g, 'rays', C.W / 2, py + 30, 820, 1093, Math.min(0.85, k * 1.2), k * 0.2)) {
       g.save();
       g.translate(C.W / 2, py + 20);
       g.rotate(k * 0.25);
@@ -1751,14 +1757,17 @@
     g.rotate(-0.05);
     g.scale(sc, sc);
     g.globalAlpha = Math.min(1, k * 4);
-    JQ.rr(g, -112, -48, 224, 96, 14);
-    g.fillStyle = win ? '#a8281a' : w === 1 ? '#4a4a4a' : '#6a5a3a';
-    g.fill();
-    g.strokeStyle = '#f2d9a0';
-    g.lineWidth = 3;
-    g.stroke();
-    text(g, word, 0, 2, 56, '#fff1d0');
-    if (w === 1) {
+    const sealSp = JQ.ui2Draw(g, win || w !== 1 ? 'seal_red' : 'seal_gray', -78, -74, 156, 154);
+    if (!sealSp) {
+      JQ.rr(g, -112, -48, 224, 96, 14);
+      g.fillStyle = win ? '#a8281a' : w === 1 ? '#4a4a4a' : '#6a5a3a';
+      g.fill();
+      g.strokeStyle = '#f2d9a0';
+      g.lineWidth = 3;
+      g.stroke();
+    }
+    text(g, word, 0, 4, sealSp ? 50 : 56, '#fff1d0', { stroke: win ? '#5a0a04' : '#1a1a1a', strokeW: 4 });
+    if (w === 1 && !sealSp) {
       // 裂纹
       g.strokeStyle = 'rgba(20,20,20,0.7)';
       g.lineWidth = 2;
@@ -1774,7 +1783,7 @@
     }
     g.restore();
     // 关卡星级
-    let y = py + 92;
+    let y = py + 100;
     if (staged && win && pg) {
       for (let i = 0; i < 3; i++) {
         const t0 = 0.45 + i * 0.22, kk = Math.max(0, Math.min(1, (k - t0) / 0.25));
@@ -1783,7 +1792,7 @@
         g.translate(C.W / 2 + (i - 1) * 64, y + 22 - (i === 1 ? 8 : 0));
         const s2 = lit ? 1 + 0.6 * (1 - JQ.ease(kk)) : 1;
         g.scale(s2, s2);
-        starShape(0, 0, 24, lit ? '#ffd23f' : 'rgba(80,70,60,0.8)', lit ? '#8a5a10' : 'rgba(160,140,110,0.5)');
+        if (!JQ.ui2Draw(g, lit ? 'star_on' : 'star_off', -30, -29, 60, 57)) starShape(0, 0, 24, lit ? '#ffd23f' : 'rgba(80,70,60,0.8)', lit ? '#8a5a10' : 'rgba(160,140,110,0.5)');
         g.restore();
       }
       if (pg.newStars && k > 1.2) text(g, `新星 +${pg.newStars}`, C.W / 2 + 140, y + 24, 14, '#ffd23f', { font: 'sans-serif' });
@@ -1801,7 +1810,8 @@
         if (!item) return;
         const name = item.key;
         const box = 64;
-        if (!JQ.ui9(g, 'card', x, y, box, box, 34, 14)) panel(x, y, box, box, '#f3ead3', '#6a4a20', 2);
+        if (tag === 'MVP 英雄' && JQ.ui2Draw(g, 'laurel', x - 16, y - 18, 96, 99));
+        else if (!JQ.ui9(g, 'card', x, y, box, box, 34, 14)) panel(x, y, box, box, '#f3ead3', '#6a4a20', 2);
         text(g, name.length > 1 ? name : name, x + box / 2, y + box / 2 + 2, name.length > 1 ? 24 : 34, '#2a1a08');
         text(g, tag, x + box + 10, y + 12, 13, '#ffcf5a', { align: 'left' });
         text(g, `输出 ${roll(item.dmg).toLocaleString()}`, x + box + 10, y + 34, 15, '#fff3d6', { align: 'left', font: 'sans-serif' });
@@ -1844,25 +1854,30 @@
       g.fill();
       g.restore();
       const xpK = Math.max(0, Math.min(1, (k - 0.8) / 0.8));
-      text(g, `主公 Lv${prog.lv}`, px + 52, y + 20, 17, '#ffe9a0', { align: 'left' });
+      JQ.ui2Draw(g, 'badge', px + 44, y + 2, 28, 32);
+      text(g, `主公 Lv${prog.lv}`, px + 78, y + 20, 17, '#ffe9a0', { align: 'left' });
       g.save();
-      JQ.rr(g, px + 160, y + 14, 300, 10, 5);
+      JQ.rr(g, px + 176, y + 14, 284, 10, 5);
       g.fillStyle = 'rgba(255,255,255,0.12)';
       g.fill();
-      JQ.rr(g, px + 160, y + 14, Math.max(6, 300 * (prog.xp / lvNeed(prog.lv)) * xpK), 10, 5);
+      JQ.rr(g, px + 176, y + 14, Math.max(6, 284 * (prog.xp / lvNeed(prog.lv)) * xpK), 10, 5);
       g.fillStyle = '#e6b04a';
       g.fill();
       g.restore();
       text(g, `+${pg.xp} 经验` + (pg.lvUps ? `  升级！` : ''), px + 474, y + 20, 14, pg.lvUps ? '#ffd23f' : '#d8c8a0', { align: 'left', font: 'sans-serif' });
       const sl = pg.souls.slice(0, 3).map((x) => `${x.name} +${x.add}` + (x.to > x.from ? `（${x.to}★）` : ''));
-      text(g, sl.length ? '将魂  ' + sl.join('   ') : '将魂  本局没有英雄出场', px + 52, y + 54, 14, '#f0e4c8', { align: 'left', font: 'sans-serif', bold: false });
+      JQ.ui2Draw(g, 'soul', px + 48, y + 38, 18, 31);
+      text(g, sl.length ? '将魂  ' + sl.join('   ') : '将魂  本局没有英雄出场', px + 72, y + 54, 14, '#f0e4c8', { align: 'left', font: 'sans-serif', bold: false });
       const up = pg.souls.find((x) => x.to > x.from);
       const extra = [];
       if (up && k > 1.4) extra.push(`★ ${up.name} 升到 ${up.to} 星：攻击/血量 +${up.to * 2}%`);
       if (pg.chest) extra.push(`星级宝箱 ×${pg.chest}：万能将魂 +${30 * pg.chest}`);
       if (pg.lvUps) extra.push(`升级奖励：万能将魂 +${20 * pg.lvUps}`);
       if (rw && rw.coins) extra.push(`金币 +${rw.coins}${rw.shop ? ' · 商店已刷新' : ''}`);
-      extra.slice(0, 2).forEach((l, i) => text(g, l, px + 52, y + 84 + i * 26, 14, '#ffd23f', { align: 'left', font: 'sans-serif' }));
+      extra.slice(0, 2).forEach((l, i) => {
+        if (l.startsWith('星级宝箱')) JQ.ui2Draw(g, 'chest_open', px + 44, y + 70 + i * 26, 28, 28);
+        text(g, l, px + (l.startsWith('星级宝箱') ? 78 : 52), y + 84 + i * 26, 14, '#ffd23f', { align: 'left', font: 'sans-serif' });
+      });
       y += 146;
     }
     if (!win && w === 1 && k > 1) text(g, tipOnLose(), C.W / 2, y + 2, 14, '#f0c0a0', { font: 'sans-serif', bold: false });

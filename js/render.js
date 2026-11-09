@@ -41,7 +41,7 @@
     coin: [175, 600, 164, 164], bun: [341, 600, 168, 141], lock: [511, 600, 170, 164], chest: [683, 600, 196, 158],
   };
   const uiImg = new Image();
-  uiImg.src = 'img/ui.webp?v=20261110a';
+  uiImg.src = 'img/ui.webp?v=20261110b';
   const uiOk = () => uiImg.complete && uiImg.naturalWidth > 0;
   JQ.uiOk = uiOk;
   // 整张贴（图标），按宽高缩放
@@ -75,6 +75,168 @@
     for (let r = 0; r < 3; r++) for (let c = 0; c < 3; c++) g.drawImage(uiImg, xs[c], ys[r], ws[c], hs[r], dx[c], dy[r], dw[c], dh[r]);
     return true;
   };
+
+  // ---------- 第二张界面图集（结算/养成）与技能特效图（黑底，叠加发光画） ----------
+  const ATLAS2 = {
+    seal_red: [0, 0, 188, 186], seal_gray: [190, 0, 186, 185], star_on: [378, 0, 226, 216], star_off: [606, 0, 225, 214],
+    chest_open: [0, 218, 224, 223], soul: [226, 218, 159, 278], badge: [387, 218, 223, 258], laurel: [612, 218, 243, 249],
+    knot: [0, 498, 192, 285], bar: [194, 498, 282, 73], scroll_long: [478, 498, 273, 123], divider: [753, 498, 248, 44],
+  };
+  const ui2Img = new Image();
+  ui2Img.src = 'img/ui2.webp?v=20261110b';
+  JQ.ui2Draw = function (g, name, x, y, w, h) {
+    if (!(ui2Img.complete && ui2Img.naturalWidth)) return false;
+    const a = ATLAS2[name];
+    g.drawImage(ui2Img, a[0], a[1], a[2], a[3], x, y, w, h);
+    return true;
+  };
+  // 特效图：4 列 × 3 行，每格 256×341
+  const FXS = { rays: [0, 0], ring: [1, 0], slash: [2, 0], bolt: [3, 0], fire: [0, 1], water: [1, 1], lotus: [2, 1], circle: [3, 1], pillar: [0, 2], sparkle: [1, 2], dust: [2, 2], fog: [3, 2] };
+  const fxImg = new Image();
+  fxImg.src = 'img/fx.webp?v=20261110b';
+  // 加载后把每格转成小尺寸透明图（亮度当透明度），之后按普通方式画：
+  // 比每次用 'lighter' 叠加 1024 大图便宜得多，在手机上差别很明显
+  const fxCells = {};
+  fxImg.onload = () => {
+    try {
+      for (const [name, [c, r]] of Object.entries(FXS)) {
+        const W = 160, H = 213;
+        const cv = document.createElement('canvas');
+        cv.width = W;
+        cv.height = H;
+        const cg = cv.getContext('2d');
+        cg.drawImage(fxImg, c * 256, r * 341, 256, 341, 0, 0, W, H);
+        const d = cg.getImageData(0, 0, W, H), p = d.data;
+        for (let i = 0; i < p.length; i += 4) {
+          const m = Math.max(p[i], p[i + 1], p[i + 2]);
+          if (m < 3) {
+            p[i + 3] = 0;
+            continue;
+          }
+          const k = 255 / m;
+          p[i] = Math.min(255, p[i] * k);
+          p[i + 1] = Math.min(255, p[i + 1] * k);
+          p[i + 2] = Math.min(255, p[i + 2] * k);
+          p[i + 3] = m;
+        }
+        cg.putImageData(d, 0, 0);
+        fxCells[name] = cv;
+      }
+    } catch (e) {}
+  };
+  let fxBudget = 0; // 每帧最多画多少个素材特效，防止大混战时堆太多
+  JQ.fxBudgetReset = () => (fxBudget = 14);
+  // 以 (x,y) 为中心画一格特效；低画质或超出本帧额度时不画
+  JQ.fxSprite = function (g, name, x, y, w, h, alpha, rot) {
+    const cv = fxCells[name];
+    if (JQ.lowFx || !cv || alpha <= 0.02 || fxBudget <= 0) return false;
+    fxBudget--;
+    g.save();
+    g.globalAlpha = Math.min(1, alpha);
+    g.translate(x, y);
+    if (rot) g.rotate(rot);
+    g.drawImage(cv, -w / 2, -h / 2, w, h);
+    g.restore();
+    return true;
+  };
+  // 给已有特效叠一层手绘素材：k = 0→1 的进度
+  function fxOverlay(g, f, k) {
+    const S = JQ.fxSprite;
+    const x = f.follow ? f.follow.x : f.x, y = f.follow ? f.follow.y : f.y;
+    const fade = k < 0.15 ? k / 0.15 : 1 - Math.max(0, (k - 0.5) / 0.5);
+    switch (f.kind) {
+      case 'shock':
+      case 'pulse':
+      case 'evRage': {
+        const r = (f.r || 80) * (f.kind === 'evRage' ? 2.2 : 1.6) * (0.35 + 0.9 * ease(k));
+        g.save();
+        g.translate(x, y);
+        g.scale(1, 0.55);
+        S(g, 'ring', 0, 0, r * 2, r * 2.66, (1 - k) * 0.95);
+        g.restore();
+        break;
+      }
+      case 'spin': {
+        const r = (f.r || 90) * 1.5;
+        g.save();
+        g.translate(x, y);
+        g.scale(1, 0.6);
+        S(g, 'ring', 0, 0, r * 2, r * 2.66, fade * 0.7, k * 12);
+        g.restore();
+        break;
+      }
+      case 'lotus':
+      case 'heal': {
+        const r = (f.r || 120) * (f.big ? 1.1 : 0.8);
+        g.save();
+        g.translate(x, y);
+        g.scale(1, 0.62);
+        S(g, 'lotus', 0, -r * 0.1, r * 2, r * 2.66, fade * 0.85, k * 0.6);
+        g.restore();
+        break;
+      }
+      case 'runeburst':
+      case 'palm':
+      case 'portal': {
+        const r = (f.r || 80) * 1.3;
+        g.save();
+        g.translate(x, y);
+        g.scale(1, 0.55);
+        S(g, 'circle', 0, 0, r * 2, r * 2.66, fade * 0.85, k * 2);
+        g.restore();
+        break;
+      }
+      case 'firewave':
+      case 'burn': {
+        const a = f.ang || 0, len = f.len || 160;
+        for (let i = 1; i <= 3; i++) {
+          const d = (len * i) / 3.4;
+          const sz = (f.width || 100) * (0.5 + i * 0.22) * (0.6 + 0.6 * ease(k));
+          S(g, 'fire', x + Math.cos(a) * d, y + Math.sin(a) * d, sz, sz * 1.33, fade * 0.75);
+        }
+        break;
+      }
+      case 'meteor': {
+        if (k > 0.35) {
+          const kk = (k - 0.35) / 0.65, r = (f.r || 120) * 1.4;
+          S(g, 'fire', x, y - 10, r * (0.8 + kk * 0.6), r * 1.33 * (0.8 + kk * 0.6), (1 - kk) * 0.9);
+          S(g, 'dust', x, y, r * 1.6, r * 2.1, (1 - kk) * 0.6);
+        }
+        break;
+      }
+      case 'wave': {
+        const a = f.ang != null ? f.ang : Math.atan2((f.y2 || y) - y, (f.x2 || x) - x);
+        const len = f.len || Math.hypot((f.x2 || x) - x, (f.y2 || y) - y) || 200;
+        const d = len * (0.2 + 0.7 * ease(k));
+        const sz = (f.width || 60) * 2.4;
+        S(g, 'water', x + Math.cos(a) * d, y + Math.sin(a) * d, sz, sz * 1.33, fade * 0.85, a + Math.PI / 2);
+        break;
+      }
+      case 'slash':
+      case 'tangblade': {
+        if (f.kind === 'slash' && f.life < 0.3) break; // 普攻刀光太频繁，只给技能刀光加素材
+        const sz = (f.r || 70) * 1.8;
+        S(g, 'slash', x, y, sz, sz * 1.33, (1 - k) * 0.95, (f.ang || 0) + k * 0.8);
+        break;
+      }
+      case 'bolt':
+        S(g, 'bolt', x, y - 110, f.big ? 170 : 130, f.big ? 300 : 230, (1 - k) * 1);
+        break;
+      case 'crater':
+        S(g, 'dust', x, y, (f.r || 100) * 2.4, (f.r || 100) * 3.2, (1 - k) * 0.7);
+        break;
+      case 'evPillar':
+        S(g, 'pillar', x, y - 170, 190, 460, fade);
+        break;
+      case 'evFog':
+        for (let i = 0; i < 5; i++) S(g, 'fog', 90 + i * 135, y + ((i * 97) % 300) - 150 + k * 30, 300, 400, Math.sin(Math.min(1, k) * Math.PI) * 0.55);
+        break;
+      case 'burst':
+        if (f.n >= 30) S(g, 'pillar', x, y - 120, 130, 320, (1 - k) * 0.9);
+        else if (f.n >= 24) S(g, 'sparkle', x, y - 10, 120, 160, (1 - k) * 0.9, k);
+        break;
+    }
+  }
 
   const INK = ['#141414', '#7d1212'];
   const TEAM = ['#3d8bff', '#ff4a3a'];
@@ -1009,6 +1171,12 @@
     if (z.hidden) return;
     const k = (t - z.born) / (z.until - z.born);
     const a = k < 0.1 ? k / 0.1 : k > 0.85 ? (1 - k) / 0.15 : 1;
+    // 阵法底下垫一层旋转的金色法阵
+    g.save();
+    g.translate(z.x, z.y);
+    g.scale(1, 0.55);
+    JQ.fxSprite(g, 'circle', 0, 0, z.r * 2.3, z.r * 3.06, Math.max(0, a) * 0.55, t * 0.6);
+    g.restore();
     g.save();
     g.globalAlpha = Math.max(0, a);
     g.translate(z.x, z.y);
@@ -1054,6 +1222,7 @@
   const BUILTIN = new Set(['text', 'slash', 'ring', 'shock', 'spin', 'bolt', 'ink', 'pulse', 'burst', 'runeburst', 'after', 'streak', 'crater', 'sword', 'petals', 'storm', 'tails', 'abyss']);
   function drawFx(g, f, game) {
     const k = f.t / f.life;
+    fxOverlay(g, f, k);
     const v = JQ.VFX && JQ.VFX[f.kind];
     if (v && !BUILTIN.has(f.kind)) {
       g.save();
@@ -1668,7 +1837,7 @@
       g.strokeStyle = r.on ? '#ffcf5a' : 'rgba(230,194,122,0.4)';
       g.lineWidth = r.on ? 2 : 1;
       g.stroke();
-      if (r.on) {
+      if (r.on && !JQ.ui2Draw(g, 'knot', x + 4, y + 1, 19, 28)) {
         g.fillStyle = '#ffcf5a';
         g.beginPath();
         g.arc(x + 15, y + h / 2, 5 + Math.sin(t * 4) * 1, 0, TAU);
@@ -1780,6 +1949,7 @@
 
   JQ.render = function (game, view) {
     const g = view.g;
+    JQ.fxBudgetReset();
     if (!bg) bg = makeBackground();
     g.save();
     if (game.shake > 0) g.translate((Math.random() - 0.5) * game.shake, (Math.random() - 0.5) * game.shake);
