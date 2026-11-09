@@ -835,6 +835,12 @@
           if (this.move(s.id, a.r, a.c, b.r, b.c) === 'merge') {
             this.addFx({ kind: 'ring', x: rc.cx, y: rc.cy, r: 38, life: 0.5, color: HEROES['夏夏'].aura });
             this.addFx({ kind: 'text', x: rc.cx, y: rc.cy - 26, text: '巧手', color: HEROES['夏夏'].aura, life: 0.7, size: 16 });
+            // 巧手造物：合成后额外召出一个同等级单位，补回合成损失
+            const merged = b.card;
+            if (merged && merged.kind === 'unit' && s.unitCap(merged.key) > s.aliveCount(merged.key)) {
+              this.spawnUnit(s, merged.key, merged.level, rc.cx, { y: rc.cy, bonusSpawn: true });
+              this.addFx({ kind: 'text', x: rc.cx, y: rc.cy + 26, text: '造物', color: HEROES['夏夏'].aura, life: 0.7, size: 14 });
+            }
           }
         } else {
           // 场上没有可合的，就合备战席（同样走拖动合成的规则）

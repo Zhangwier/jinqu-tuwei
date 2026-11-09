@@ -104,7 +104,7 @@ function unitMixedFight(a, b, level, seed) {
   const g = game(seed);
   const put = (s, side, key, x, y, isTest) => {
     const d = JQ.UNITS[key];
-    const fy = side === 0 ? (d.ranged ? 660 : 620) : (d.ranged ? 500 : 540);
+    const fy = side === 0 ? (d.ranged || d.assassin ? 660 : 620) : (d.ranged || d.assassin ? 500 : 540);
     const u = spawnU(g, s, key, level, x, isTest ? fy : y);
     return u;
   };
@@ -164,7 +164,7 @@ function heroFight(a, b, seed, team) {
   const A = g.sides[0], B = g.sides[1];
   const backRole = (n) => {
     const h = JQ.HEROES[n];
-    return !!(h.ranged || h.role === '辅助' || h.role === '法师' || h.role === '射手' || h.role === '特殊');
+    return !!(h.ranged || h.assassin || h.role === '辅助' || h.role === '法师' || h.role === '射手' || h.role === '特殊');
   };
   const teamHeroY = (side, n) => (side === 0 ? (backRole(n) ? 680 : 600) : backRole(n) ? 480 : 560);
   spawnH(g, A, a, 3, 360, team ? teamHeroY(0, a) : 600);
@@ -218,7 +218,7 @@ function heroClear(name, seed, unitLevel) {
   const g = game(seed);
   const A = g.sides[0], B = g.sides[1];
   const h = JQ.HEROES[name];
-  const back = h.ranged || h.role === '辅助' || h.role === '法师' || h.role === '射手' || h.role === '特殊';
+  const back = h.ranged || h.assassin || h.role === '辅助' || h.role === '法师' || h.role === '射手' || h.role === '特殊';
   const hero = spawnH(g, A, name, 3, 360, back ? 680 : 600);
   const add = (key, x, y) => spawnU(g, B, key, unitLevel, x, y);
   add('盾', 300, 540); add('盾', 420, 540);
