@@ -41,7 +41,7 @@
     coin: [175, 600, 164, 164], bun: [341, 600, 168, 141], lock: [511, 600, 170, 164], chest: [683, 600, 196, 158],
   };
   const uiImg = new Image();
-  uiImg.src = 'img/ui.webp?v=20261109s';
+  uiImg.src = 'img/ui.webp?v=20261110a';
   const uiOk = () => uiImg.complete && uiImg.naturalWidth > 0;
   JQ.uiOk = uiOk;
   // 整张贴（图标），按宽高缩放
@@ -1531,6 +1531,7 @@
       g.restore();
     }
     if (game.R.events) drawEventHud(g, game, t);
+    drawBondHud(g, game, s, t);
     // 包子
     const bun = UI.bun;
     if (view.target && view.target.sell) {
@@ -1640,6 +1641,43 @@
       g.globalAlpha = Math.min(1, view.infoT * 2);
       text(g, view.info, C.W / 2, UI.info.y, 17, '#ffeec0', { stroke: 'rgba(0,0,0,0.6)', strokeW: 4 });
       g.restore();
+    }
+  }
+
+  // 羁绊：左侧竖排小签。已生效=金边；差一人到下一档=暗色并写“差1”
+  function drawBondHud(g, game, s, t) {
+    const formed = new Set(s.board.links.map((l) => l.hero));
+    const rows = [];
+    for (const b of JQ.packBonds(s.pack)) {
+      const n = b.heroes.filter((h) => formed.has(h)).length;
+      if (!n) continue;
+      let cur = null, next = null;
+      for (const tr of b.tiers) if (n >= tr.n) cur = tr; else if (!next) next = tr;
+      if (cur) rows.push({ b, n, on: true, need: next ? next.n : b.heroes.length });
+      else if (next && next.n - n === 1) rows.push({ b, n, on: false, need: next.n });
+    }
+    rows.sort((a, c) => c.on - a.on || c.n - a.n);
+    let y = JQ.baseLine(1) + 24;
+    for (const r of rows.slice(0, 6)) {
+      const w = 138, h = 30, x = 8;
+      g.save();
+      g.globalAlpha = r.on ? 0.95 : 0.72;
+      g.fillStyle = r.on ? 'rgba(60,36,10,0.86)' : 'rgba(22,16,10,0.72)';
+      rr(g, x, y, w, h, 15);
+      g.fill();
+      g.strokeStyle = r.on ? '#ffcf5a' : 'rgba(230,194,122,0.4)';
+      g.lineWidth = r.on ? 2 : 1;
+      g.stroke();
+      if (r.on) {
+        g.fillStyle = '#ffcf5a';
+        g.beginPath();
+        g.arc(x + 15, y + h / 2, 5 + Math.sin(t * 4) * 1, 0, TAU);
+        g.fill();
+      }
+      text(g, r.b.name, x + 26, y + h / 2 + 1, 14, r.on ? '#ffe9a0' : '#c8b896', { align: 'left' });
+      text(g, r.on ? `${r.n}/${r.need}` : '差1', x + w - 10, y + h / 2 + 1, 12, r.on ? '#fff3d6' : '#e8a060', { align: 'right', font: 'sans-serif' });
+      g.restore();
+      y += h + 6;
     }
   }
 

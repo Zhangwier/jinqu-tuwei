@@ -83,7 +83,11 @@
       this.incomeMult = T.income;
       this.heroAlive = {};
       this.heroCd = {};
-      this.stats = { summoned: 0, kills: 0, baseDmg: 0, heroes: 0, ults: 0 };
+      this.stats = { summoned: 0, kills: 0, baseDmg: 0, heroes: 0, ults: 0, dmg: {}, heroKills: {}, heroLv: {} };
+      this.bonds = []; // 当前生效的羁绊 [{ bond, tier, n }]
+      this.bondKey = '';
+      this.bondMods = { hero: {}, unitAtk: 0, unitHp: 0, buns: [] };
+      this.bondT = 0;
       const crystal = this.board.all().find((x) => x.crystal);
       const rc = JQ.cellRect(id, crystal.r, crystal.c);
       this.walker = { from: crystal, to: crystal, p: 1, dur: 1, dir: 1, x: rc.cx, y: rc.cy };
@@ -127,6 +131,7 @@
       this.R = Object.assign(JQ.defaultRules(), this.mode.rules);
       this.stage = Math.max(1, Math.min(C.MAX_STAGE, opts.stage || 1));
       this.skillToast = opts.skillToast !== false;
+      this.mastery = opts.mastery || {}; // 玩家英雄将魂星级：每星攻击/血量 +2%，最多 5 星
       // 卡包：玩家自选，对手默认随机一个已开放的；自定义包没配好不能进
       const usable = (p) => !!(JQ.PACKS[p] && JQ.PACKS[p].open && (p !== 'custom' || JQ.customReady()));
       const open = JQ.OPEN_PACKS.filter(usable);
@@ -260,6 +265,15 @@
           if (linked.has(name) || !JQ.heroInPack(name, b.pack)) continue;
           const partner = JQ.partnerOf(name, x.card.key);
           if (partner && !this.charBlocked(this.sides[sid], partner)) want.add(partner);
+        }
+      }
+      // 羁绊凑到一半：还没上场的成员也算“想要”（取它的第一个字），让凑羁绊有盼头
+      for (const bd of JQ.packBonds(b.pack)) {
+        if (!bd.heroes.some((h) => linked.has(h))) continue;
+        for (const h of bd.heroes) {
+          if (linked.has(h)) continue;
+          const ch = HEROES[h].chars[0];
+          if (!this.charBlocked(this.sides[sid], ch)) want.add(ch);
         }
       }
       return [...want];
@@ -561,6 +575,8 @@
         for (const k of Object.keys(s.heroCd)) s.heroCd[k] = Math.max(0, s.heroCd[k] - dt);
         this.stepWalker(s, dt);
         this.stepTower(s, dt);
+        if ((s.bondT -= dt) <= 0) (s.bondT = 0.5), this.updateBonds(s);
+        for (const b of s.bondMods.buns) if ((b.t = (b.t || 0) + dt) >= b.every) (b.t = 0), (s.buns += b.n), this.emit('bondBuns', { side: s.id, n: b.n });
       }
       if (this.timers.length) {
         const due = this.timers.filter((t) => t.at <= this.time);
@@ -720,6 +736,8 @@
       if (splash) u.passive = { splash: { n: 1, pct: splash } };
       u.lifesteal = T.unitLifesteal || 0;
       u.deathBlast = T.deathBlast || 0;
+      if (s.bondMods.unitHp) (u.hp *= 1 + s.bondMods.unitHp), (u.maxHp *= 1 + s.bondMods.unitHp);
+      if (s.bondMods.unitAtk) u.atk *= 1 + s.bondMods.unitAtk;
       Object.assign(u, extra || {});
       this.units.push(u);
       s.stats.summoned++;
@@ -742,11 +760,15 @@
         skillT: d.skill.cd * 0.5, ultT: d.ult.cd * 0.4, incomeT: 0, shieldT: 0,
       };
       if (P.stealth) u.stealthUntil = this.time + P.stealth;
+      const star = s.id === 0 ? Math.min(5, this.mastery[name] || 0) : 0;
+      if (star) (u.hp *= 1 + 0.02 * star), (u.maxHp *= 1 + 0.02 * star), (u.atk *= 1 + 0.02 * star), (u.star = star);
       Object.assign(u, extra || {});
+      this.applyBond(s, u);
       this.units.push(u);
       if (u.clone) return u;
       s.heroAlive[name] = u;
       s.stats.heroes++;
+      s.stats.heroLv[name] = Math.max(s.stats.heroLv[name] || 0, level);
       this.addFx({ kind: 'burst', x, y: u.y, color: d.aura, n: 30, life: 0.9, speed: 220 });
       this.addFx({ kind: 'ring', x, y: u.y, r: 70, life: 0.6, color: d.aura });
       this.emit('hero', { side: s.id, name });
@@ -756,6 +778,8 @@
     upgradeHero(u, level) {
       const m = JQ.heroLevelMult(level) / JQ.heroLevelMult(u.level);
       u.level = level;
+      const st = this.sides[u.side] && this.sides[u.side].stats;
+      if (st && !u.clone) st.heroLv[u.key] = Math.max(st.heroLv[u.key] || 0, level);
       u.maxHp *= m;
       u.hp = Math.min(u.maxHp, u.hp * m + u.maxHp * 0.2);
       u.atk *= m;
@@ -1068,16 +1092,19 @@
       if (src && src.ranged && t.rangedReduce && !opts.skill) mult *= 1 - t.rangedReduce;
       if (src && src.atkBuffUntil > this.time) mult *= src.atkBuff;
       if (src && src.auraAtk) mult *= 1 + src.auraAtk;
+      if (src && src.bondAtk) mult *= 1 + src.bondAtk;
       if (src && src.side != null && this.sides[src.side].T.lastStand && this.sides[src.side].hp < this.sides[src.side].maxHp * 0.3) mult *= 1.4;
       let crit = false;
       if (!opts.dot) {
-        if (SP.crit && this.rand() < SP.crit) (mult *= SP.critMult || 2), (crit = true);
+        const critP = (SP.crit || 0) + ((src && src.bondCrit) || 0);
+        if (critP && this.rand() < critP) (mult *= SP.critMult || 2), (crit = true);
         if (SP.heroBonus && t.isHero) mult *= 1 + SP.heroBonus;
         if (SP.longShot && Math.hypot(t.x - src.x, t.y - src.y) > 160) mult *= 1 + SP.longShot;
         if (SP.rage) mult *= 1 + SP.rage * (1 - src.hp / src.maxHp);
       }
       if (t.drUntil > this.time) mult *= 1 - t.dr;
       if (TP.dr) mult *= 1 - TP.dr;
+      if (t.bondDr) mult *= 1 - t.bondDr;
       if (TP.lowHpDr && t.hp < t.maxHp * TP.lowHpDr.below) mult *= 1 - TP.lowHpDr.dr;
       if (TP.vuln) mult *= 1 + TP.vuln;
       if (t.auraDr) mult *= 1 - t.auraDr;
@@ -1089,6 +1116,10 @@
       }
       let dmg = amount * mult;
       const shown = dmg;
+      if (src && src.side != null && this.sides[src.side] && src.key) {
+        const st = this.sides[src.side].stats.dmg;
+        st[src.key] = (st[src.key] || 0) + Math.min(dmg, Math.max(0, t.hp + (t.shield || 0)));
+      }
       if (t.shield > 0) {
         const ab = Math.min(t.shield, dmg);
         t.shield -= ab;
@@ -1143,6 +1174,7 @@
         return this.loseOutpost(t);
       }
       killer.stats.kills++;
+      if (src && src.key && src.side === killer.id) killer.stats.heroKills[src.key] = (killer.stats.heroKills[src.key] || 0) + 1;
       killer.buns += (t.isHero && !t.clone ? C.HERO_KILL_BUNS : C.KILL_BUNS) + (killer.T.killBuns || 0);
       this.addFx({ kind: 'ink', x: t.x, y: t.y, life: 0.9, side: t.side, big: t.isHero, text: t.key });
       if (t.deathBlast && this.rand() < t.deathBlast) {
@@ -1301,7 +1333,7 @@
 
     castUlt(u, d) {
       this.sides[u.side].stats.ults++;
-      u.ultT = d.ult.cd * (u.ultCdMult || 1);
+      u.ultT = d.ult.cd * (u.ultCdMult || 1) * (u.bondCd || 1);
       u.anim = 0.4;
       this.shake = Math.max(this.shake, 8);
       if (this.skillToast) this.addFx({ kind: 'banner', x: C.W / 2, y: u.side === 0 ? 700 : 470, text: d.ult.name, hero: d.name, color: d.aura, side: u.side, life: 1.5 });
@@ -1323,7 +1355,7 @@
       u.skillT -= dt;
       if (u.skillT > 0) return;
       if (this.cast(u, d.skill, false, live)) {
-        u.skillT = d.skill.cd;
+        u.skillT = d.skill.cd * (u.bondCd || 1);
         u.anim = 0.35;
         if (this.skillToast) this.addFx({ kind: 'text', x: u.x, y: u.y - 44, text: d.skill.name, color: d.aura, life: 0.9, size: 18 });
         this.emit('skill', { side: u.side, name: u.key });
@@ -1604,6 +1636,67 @@
       }
       this.addFx({ kind: 'banner', x: C.W / 2, y: 470, hero: '守关', text: `第 ${n} 波`, color: n % 4 === 0 ? '#ff4030' : '#ffd23f', side: 1, life: 1.4 });
       this.emit('wave', { n });
+    }
+
+    // ---------- 羁绊 ----------
+    // 只看棋盘上已经合成的英雄（同名取一次）；成员凑够某档人数即生效
+    updateBonds(s) {
+      const formed = new Set(s.board.links.map((l) => l.hero));
+      const act = [];
+      for (const b of JQ.packBonds(s.pack)) {
+        const n = b.heroes.filter((h) => formed.has(h)).length;
+        let tier = null;
+        for (const t of b.tiers) if (n >= t.n) tier = t;
+        if (tier) act.push({ bond: b, tier, n });
+      }
+      const key = act.map((a) => a.bond.id + a.tier.n).join(',');
+      if (key === s.bondKey) return;
+      const old = new Set(s.bonds.map((a) => a.bond.id + a.tier.n));
+      s.bondKey = key;
+      s.bonds = act;
+      const M = { hero: {}, unitAtk: 0, unitHp: 0, buns: [] };
+      for (const a of act) {
+        const t = a.tier;
+        for (const h of a.bond.heroes) {
+          const m = (M.hero[h] = M.hero[h] || { atk: 0, hp: 0, dr: 0, crit: 0, cd: 0 });
+          m.atk += t.atk || 0;
+          m.hp += t.hp || 0;
+          m.dr += t.dr || 0;
+          m.crit += t.crit || 0;
+          m.cd += t.cd || 0;
+        }
+        M.unitAtk += t.unitAtk || 0;
+        M.unitHp += t.unitHp || 0;
+        if (t.buns) M.buns.push({ n: t.buns.n, every: t.buns.every, t: 0 });
+      }
+      s.bondMods = M;
+      for (const u of this.units) if (u.side === s.id && u.isHero && u.hp > 0) this.applyBond(s, u);
+      for (const a of act) {
+        if (old.has(a.bond.id + a.tier.n)) continue;
+        this.emit('bond', { side: s.id, bond: a.bond, tier: a.tier });
+        if (s.id === 0) this.addFx({ kind: 'banner', x: C.W / 2, y: 700, hero: '羁绊', text: a.bond.name, color: '#ffcf5a', side: 0, life: 1.8 });
+        for (const u of this.units) {
+          if (u.side !== s.id || !u.isHero || u.hp <= 0 || !a.bond.heroes.includes(u.key)) continue;
+          this.addFx({ kind: 'ring', x: u.x, y: u.y, r: 80, life: 0.8, color: '#ffcf5a' });
+          this.addFx({ kind: 'text', x: u.x, y: u.y - 46, text: a.bond.name, color: '#ffcf5a', life: 1.2, size: 16 });
+        }
+      }
+    }
+    // 把羁绊加成写到英雄身上；血量按比例换算，重复调用不叠加
+    applyBond(s, u) {
+      if (!u.isHero) return;
+      const m = s.bondMods.hero[u.key] || { atk: 0, hp: 0, dr: 0, crit: 0, cd: 0 };
+      const oldHp = u.bondHp || 0;
+      if (m.hp !== oldHp) {
+        const f = (1 + m.hp) / (1 + oldHp);
+        u.maxHp *= f;
+        u.hp *= f;
+        u.bondHp = m.hp;
+      }
+      u.bondAtk = m.atk;
+      u.bondDr = Math.min(0.5, m.dr);
+      u.bondCrit = m.crit;
+      u.bondCd = Math.max(0.5, 1 - m.cd);
     }
 
     // 某个字在棋盘 + 备战席上一共有几张

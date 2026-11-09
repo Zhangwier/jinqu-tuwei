@@ -136,6 +136,7 @@
   if (/[?&]screen=talents/.test(location.search)) (mode = 'fate'), (fateSave.coins = Math.max(fateSave.coins, 300)), (screen = 'talents'); // 调试：直接打开天赋商店
   if (/[?&]screen=roster/.test(location.search)) (helpPage = 1), (helpPack = pack), (screen = 'help'); // 调试：直接打开英雄图鉴
   if (/[?&]screen=units/.test(location.search)) screen = 'units'; // 调试：直接打开小兵图鉴
+  if (/[?&]screen=bonds/.test(location.search)) (helpPage = 1), (helpPack = 'bonds'), (screen = 'help'); // 调试：直接打开羁绊一览
   let dblSell = localStorage.getItem('jq_dblsell') === '1'; // 设置：双击卡牌直接卖掉
   let skillToast = localStorage.getItem('jq_skilltoast') !== '0'; // 设置：英雄放技能时的弹字/大招横幅
   let lastTap = null;
@@ -180,6 +181,77 @@
     return out;
   }
 
+  // ---------- 养成：主公等级 + 将魂星级 + 关卡星级 ----------
+  // 强度控制：将魂每星只给该英雄 +2% 攻击/血量（最多 5 星 +10%），只作用于玩家方；
+  // 其余奖励是解锁感和收集感（等级、星星、宝箱给万能将魂）。敌方强度仍只由关卡决定。
+  const PROG_KEY = 'jq_prog';
+  const SOUL_STEPS = [20, 60, 140, 260, 450]; // 累计将魂到这些值依次升 1~5 星
+  const PROG_DEF = () => ({ xp: 0, lv: 1, souls: {}, wild: 0, stars: { classic: {}, fate: {} }, chests: 0 });
+  let prog = PROG_DEF();
+  try {
+    prog = Object.assign(PROG_DEF(), JSON.parse(localStorage.getItem(PROG_KEY) || 'null') || {});
+  } catch (e) {}
+  const saveProg = () => localStorage.setItem(PROG_KEY, JSON.stringify(prog));
+  const soulStar = (pts) => SOUL_STEPS.filter((v) => (pts || 0) >= v).length;
+  const lvNeed = (lv) => 100 + 40 * (lv - 1);
+  function masteryMap() {
+    const m = {};
+    for (const [k, v] of Object.entries(prog.souls)) if (soulStar(v)) m[k] = soulStar(v);
+    return m;
+  }
+  function totalStars() {
+    let n = 0;
+    for (const md of Object.values(prog.stars)) for (const v of Object.values(md)) n += v;
+    return n;
+  }
+  // 给一个英雄加将魂，返回 { name, add, from, to }
+  function addSouls(name, add) {
+    const from = soulStar(prog.souls[name]);
+    prog.souls[name] = (prog.souls[name] || 0) + add;
+    return { name, add, from, to: soulStar(prog.souls[name]) };
+  }
+  // 一局结束：经验、将魂、关卡星级、星级宝箱
+  function grantProgress(g, win) {
+    const s = g.sides[0];
+    const stage = g.stage || 1;
+    const out = { xp: 0, lvUps: 0, souls: [], stars: 0, newStars: 0, chest: 0 };
+    out.xp = win ? 60 + 2 * Math.min(100, stage) : 25 + Math.min(60, stage);
+    if (g.R.waves) out.xp = 20 + 8 * Math.max(0, g.wave - 1);
+    prog.xp += out.xp;
+    while (prog.xp >= lvNeed(prog.lv)) {
+      prog.xp -= lvNeed(prog.lv);
+      prog.lv++;
+      out.lvUps++;
+      prog.wild += 20;
+    }
+    for (const [name, lv] of Object.entries(s.stats.heroLv)) out.souls.push(addSouls(name, (win ? 12 : 6) + 4 * lv));
+    out.souls.sort((a, b) => b.to - b.from - (a.to - a.from) || b.add - a.add);
+    if (win && (g.modeKey === 'classic' || g.modeKey === 'fate')) {
+      const f = s.hp / s.maxHp;
+      out.stars = f >= 0.7 ? 3 : f >= 0.4 ? 2 : 1;
+      const md = (prog.stars[g.modeKey] = prog.stars[g.modeKey] || {});
+      out.newStars = Math.max(0, out.stars - (md[stage] || 0));
+      md[stage] = Math.max(md[stage] || 0, out.stars);
+    }
+    // 每攒 10 颗关卡星开一个宝箱：30 万能将魂
+    while (Math.floor(totalStars() / 10) > prog.chests) (prog.chests++, (prog.wild += 30), out.chest++);
+    saveProg();
+    return out;
+  }
+  // 本局 MVP：输出最高的英雄 + 输出最高的兵种
+  function mvpOf(g) {
+    const st = g.sides[0].stats;
+    let hero = null, unit = null, total = 0;
+    for (const [k, v] of Object.entries(st.dmg)) {
+      total += v;
+      if (HEROES[k]) (!hero || v > hero.dmg) && (hero = { key: k, dmg: v });
+      else if (UNITS[k]) (!unit || v > unit.dmg) && (unit = { key: k, dmg: v });
+    }
+    if (hero) hero.kills = st.heroKills[hero.key] || 0;
+    if (unit) unit.kills = st.heroKills[unit.key] || 0;
+    return { hero, unit, total: Math.max(1, total) };
+  }
+
   function newGame() {
     if (pack === 'custom' && !JQ.customReady()) return openCustom();
     const seedV = (Math.random() * 1e9) | 0;
@@ -191,10 +263,12 @@
     const staged = mode === 'classic' || mode === 'fate';
     const stage = staged ? stageOf() : 1;
     const enemyBoost = staged ? JQ.stageBoost(stage) : 1;
-    game = new JQ.Game({ seed: seedV, difficulty, mode, pack, talents, enemyBoost, stage, skillToast, aiProfile: JQ.aiProfile(difficulty, player) });
+    game = new JQ.Game({ seed: seedV, difficulty, mode, pack, talents, enemyBoost, stage, skillToast, aiProfile: JQ.aiProfile(difficulty, player), mastery: masteryMap() });
     window.__jqGame = game; // 调试/性能测试用
     actions = 0;
     lastReward = null;
+    lastProg = null;
+    lastMvp = null;
     game.on((ev, d) => {
       // 记玩家操作数，用来估手速
       if (d && d.side === 0 && (ev === 'place' || ev === 'recruit' || ev === 'sell' || ev === 'item')) actions++;
@@ -257,7 +331,9 @@
         }
         localStorage.setItem('jq_player', JSON.stringify(player));
         localStorage.setItem('jq_records', JSON.stringify(records));
-        setTimeout(() => (screen = 'over'), 900);
+        lastProg = grantProgress(game, d.winner === 0);
+        lastMvp = mvpOf(game);
+        setTimeout(() => ((screen = 'over'), (overAt = performance.now())), 900);
       }
     });
     clearDrag();
@@ -670,7 +746,7 @@
   const PACK_FOCUS = { sanguo: 0.55, xiyou: 0.62 }; // 竖图裁成横幅时取景的高度位置（0 顶 ~ 1 底），默认 0.4
   for (const k of ['sanguo', 'xiyou', 'tang', 'custom']) {
     const im = new Image();
-    im.src = `img/pack_${k}.jpg?v=20261109s`;
+    im.src = `img/pack_${k}.jpg?v=20261110a`;
     PACK_ART[k] = im;
   }
   function choosePack(k) {
@@ -786,6 +862,21 @@
 
     iconBtn(16, top + 14, 56, '?', () => ((helpBack = 'menu'), (helpPage = 0), (screen = 'help')));
     iconBtn(648, top + 14, 56, '⚙', () => (menuPop = 'settings'));
+    // 主公等级 + 关卡星 + 万能将魂
+    {
+      const bx = 84, by = top + 22;
+      text(g, `主公 Lv${prog.lv}`, bx, by + 6, 17, '#ffe9a0', { align: 'left', stroke: '#2a1a08', strokeW: 3 });
+      g.save();
+      JQ.rr(g, bx, by + 20, 150, 7, 3.5);
+      g.fillStyle = 'rgba(255,255,255,0.15)';
+      g.fill();
+      JQ.rr(g, bx, by + 20, Math.max(4, (150 * prog.xp) / lvNeed(prog.lv)), 7, 3.5);
+      g.fillStyle = '#e6b04a';
+      g.fill();
+      g.restore();
+      text(g, `★ ${totalStars()}   魂 ${prog.wild}`, bx + 250, by + 6, 15, '#ffd23f', { align: 'left', font: 'sans-serif', stroke: '#2a1a08', strokeW: 3 });
+      text(g, `下个宝箱 ${10 - (totalStars() % 10)} 星`, bx + 250, by + 25, 11, '#d8c8a0', { align: 'left', font: 'sans-serif', bold: false });
+    }
     title('禁区突围', 110, 92, '#1a1a1a');
     text(g, '招兵 · 拼格 · 合字成将', C.W / 2, 182, 20, '#f5ead0');
     segmented(110, 210, 500, 56, Object.entries(JQ.MODES).map(([k, m]) => [k, m.name]), mode, (k) => {
@@ -1063,22 +1154,25 @@
     text(g, `英雄 ${customHeroes.length}/16 · 小兵 ${customUnits.length}/6-12`, C.W / 2, 96, 16, customValid() ? '#9fe0a0' : '#ffb090', { font: 'sans-serif', bold: false });
     text(g, '英雄（点选 / 再点取消）', 18, 122, 14, '#ffd23f', { align: 'left', font: 'sans-serif', bold: false });
     const heroNames = Object.keys(HEROES);
+    // 英雄多了（65 位）：8 列小格
     heroNames.forEach((name, i) => {
-      const col = i % 7, row = Math.floor(i / 7);
-      button(14 + col * 98, 136 + row * 56, 92, 50, name, () => toggleCustomHero(name), { flat: true, on: customHeroes.includes(name), size: 19 });
+      const col = i % 8, row = Math.floor(i / 8);
+      button(16 + col * 86, 136 + row * 52, 80, 46, name, () => toggleCustomHero(name), { flat: true, on: customHeroes.includes(name), size: 17 });
     });
-    text(g, '小兵（点选 / 再点取消）', 18, 552, 14, '#ffd23f', { align: 'left', font: 'sans-serif', bold: false });
+    const uy = 136 + Math.ceil(heroNames.length / 8) * 52 + 16;
+    text(g, '小兵（点选 / 再点取消）', 18, uy, 14, '#ffd23f', { align: 'left', font: 'sans-serif', bold: false });
     JQ.ALL_UNITS.forEach((key, i) => {
       const col = i % 8, row = Math.floor(i / 8);
-      button(18 + col * 86, 566 + row * 44, 78, 38, key, () => toggleCustomUnit(key), { flat: true, on: customUnits.includes(key), size: 19 });
+      button(16 + col * 86, uy + 14 + row * 46, 80, 40, key, () => toggleCustomUnit(key), { flat: true, on: customUnits.includes(key), size: 19 });
     });
-    text(g, customMsg || (customValid() ? '可以保存并开战' : '需要 16 位英雄、6~12 种小兵'), C.W / 2, 670, 15, customMsg ? '#ff8060' : '#d8c8a0', { font: 'sans-serif', bold: false });
-    button(90, 700, 180, 52, '保 存', () => {
+    const by = uy + 14 + 2 * 46 + 24;
+    text(g, customMsg || (customValid() ? '可以保存并开战' : '需要 16 位英雄、6~12 种小兵'), C.W / 2, by, 15, customMsg ? '#ff8060' : '#d8c8a0', { font: 'sans-serif', bold: false });
+    button(90, by + 26, 180, 56, '保 存', () => {
       if (!customValid()) return (customMsg = '先选满 16 位英雄和至少 6 种小兵');
       applyCustom();
       customMsg = '已保存';
     }, { size: 20 });
-    button(300, 700, 240, 52, '保存并开战', () => {
+    button(300, by + 26, 260, 56, '保存并开战', () => {
       if (!customValid()) return (customMsg = '先选满 16 位英雄和至少 6 种小兵');
       applyCustom();
       pack = 'custom';
@@ -1087,7 +1181,7 @@
       screen = 'menu';
       newGame();
     }, { size: 20, on: true });
-    button(260, 770, 200, 50, '返 回', () => (screen = 'menu'), { size: 20 });
+    button(230, by + 100, 260, 56, '返 回', () => (screen = 'menu'), { size: 22 });
   }
 
   // ---------- 测试场：自定义双方阵容，自动打一场看结果 ----------
@@ -1361,9 +1455,10 @@
   // 英雄图鉴：按卡包分页
   function drawRoster() {
     pageFrame('英雄图鉴', 0.85);
-    const tabs = JQ.OPEN_PACKS;
-    const tabW = 150, gap = 12, x0 = (C.W - (tabs.length * tabW + (tabs.length - 1) * gap)) / 2;
-    tabs.forEach((k, i) => button(x0 + i * (tabW + gap), 82, tabW, 44, JQ.PACKS[k].name, () => (helpPack = k), { on: helpPack === k, size: 22 }));
+    const tabs = JQ.OPEN_PACKS.concat('bonds');
+    const gap = 8, tabW = Math.min(150, (C.W - 40 - gap * (tabs.length - 1)) / tabs.length), x0 = (C.W - (tabs.length * tabW + (tabs.length - 1) * gap)) / 2;
+    tabs.forEach((k, i) => button(x0 + i * (tabW + gap), 82, tabW, 44, k === 'bonds' ? '羁绊' : JQ.PACKS[k].name, () => (helpPack = k), { on: helpPack === k, size: 20 }));
+    if (helpPack === 'bonds') return drawBondList();
     const roster = (JQ.PACKS[helpPack] && JQ.PACKS[helpPack].heroes) || [];
     if (!roster.length) text(g, '这个卡包还没有配置英雄（自定义卡包点「自定义卡包」选 16 位）', C.W / 2, 300, 20, '#bfb39a', { bold: false });
     roster.forEach((name, i) => {
@@ -1389,6 +1484,12 @@
       g.fill();
       g.restore();
       text(g, h.role, x + 90, y + 13, 12, '#e8dcc0', { font: 'sans-serif', bold: false });
+      const bl = (JQ.BOND_BY_HERO[name] || []).filter((b) => helpPack === 'custom' || JQ.packBonds(helpPack).includes(b));
+      if (bl.length) text(g, '羁绊·' + bl.slice(0, 2).map((b) => b.name).join('/'), x + 266, y + 13, 11, '#e6b04a', { align: 'right', font: 'sans-serif', bold: false });
+      // 将魂星级
+      const st = soulStar(prog.souls[name]);
+      text(g, '★'.repeat(st) + '☆'.repeat(5 - st), x + 330, y + 13, 11, st ? '#ffd23f' : '#6a6050', { align: 'right', font: 'sans-serif' });
+      if (prog.wild >= 10 && st < 5) button(x + 276, y + 92, 54, 26, '注魂', () => (addSouls(name, 10), (prog.wild -= 10), saveProg()), { flat: true, size: 13 });
       // 说明可能较长：按列宽自动缩字号，别顶出右边界
       const fit = (s, yy, size, color, opts) => {
         let z = size;
@@ -1407,6 +1508,36 @@
     });
     text(g, '（点空白处返回）', C.W / 2, 1262, 16, '#bfb39a');
     iconBtn(650, 22, 52, '×', () => ((helpPage = 0), (screen = helpBack)));
+  }
+
+  // 羁绊一览：按卡包分组，两列
+  function drawBondList() {
+    const PN = { sanguo: '三国', xiyou: '西游', tang: '唐朝', song: '宋朝' };
+    const packOf = (b) => {
+      for (const k of Object.keys(PN)) if (b.heroes.every((h) => JQ.heroInPack(h, k))) return PN[k];
+      return '跨包';
+    };
+    text(g, '指定英雄同时在棋盘上合成即生效；跨包羁绊只能在自定义卡包里凑', C.W / 2, 142, 13, '#d8c8a0', { font: 'sans-serif', bold: false });
+    JQ.BONDS.forEach((b, i) => {
+      const x = i % 2 ? 366 : 22, y = 160 + Math.floor(i / 2) * 70, w = 332, h = 64;
+      g.save();
+      g.fillStyle = 'rgba(255,240,210,0.07)';
+      JQ.rr(g, x, y, w, h, 10);
+      g.fill();
+      g.strokeStyle = 'rgba(230,194,122,0.35)';
+      g.lineWidth = 1;
+      g.stroke();
+      g.restore();
+      text(g, b.name, x + 10, y + 16, 17, '#ffcf5a', { align: 'left' });
+      text(g, packOf(b), x + w - 8, y + 16, 11, '#9a8f7a', { align: 'right', font: 'sans-serif', bold: false });
+      text(g, b.heroes.join('、'), x + 112, y + 17, 12, '#f0e4c8', { align: 'left', font: 'sans-serif', bold: false });
+      const tl = b.tiers.map((t) => `${t.n}人：${JQ.bondTierText(t)}`).join('  ');
+      // 已生效颜色只用米金，避免和等级绿撞色
+      let z = 11.5;
+      g.font = `${z}px sans-serif`;
+      while (z > 8.5 && g.measureText(tl).width > w - 20) (z -= 0.5), (g.font = `${z}px sans-serif`);
+      text(g, tl, x + 10, y + 44, z, '#d9c79a', { align: 'left', font: 'sans-serif', bold: false });
+    });
   }
 
   function drawPause() {
@@ -1566,91 +1697,212 @@
     saveFate();
   }
 
+  // 结算：印章盖下 → 星星逐个亮 → 数字滚动；赢了有金光和花瓣，输了印章发灰带裂纹
+  let overAt = 0, lastProg = null, lastMvp = null;
+  function starShape(cx, cy, r, fill, stroke) {
+    g.beginPath();
+    for (let i = 0; i < 10; i++) {
+      const a = -Math.PI / 2 + (i * Math.PI) / 5, rr2 = i % 2 ? r * 0.45 : r;
+      g.lineTo(cx + Math.cos(a) * rr2, cy + Math.sin(a) * rr2);
+    }
+    g.closePath();
+    g.fillStyle = fill;
+    g.fill();
+    g.lineWidth = 2.5;
+    g.strokeStyle = stroke;
+    g.stroke();
+  }
   function drawOver() {
-    // 结算：只压一层薄纱，统计放进中间的面板里，背景战斗仍隐约可见
-    veil(0.45);
+    const k = (performance.now() - overAt) / 1000;
     const w = game.winner;
     const staged = game.modeKey === 'classic' || game.modeKey === 'fate';
-    const rw = lastReward;
-    const px = 60, py = 236, pw = 600, ph = 740;
-    if (JQ.ui9(g, 'panel', px, py, pw, ph, 40, 30)) {
-      g.fillStyle = 'rgba(16,10,5,0.42)';
-      JQ.rr(g, px + 18, py + 18, pw - 36, ph - 36, 8);
-      g.fill();
-    } else {
-      panel(px, py, pw, ph, 'rgba(30,21,12,0.9)', '#c9a35a', 2.5);
+    const win = game.R.waves ? true : w === 0;
+    const rw = lastReward, pg = lastProg, mv = lastMvp;
+    veil(Math.min(0.5, k * 1.5));
+    const px = 50, py = 150, pw = 620, ph = 930;
+    // 赢：背后金色光芒慢转 + 花瓣飘落
+    if (win) {
       g.save();
-      g.strokeStyle = 'rgba(201,163,90,0.35)';
-      g.lineWidth = 1;
-      JQ.rr(g, px + 8, py + 8, pw - 16, ph - 16, 10);
-      g.stroke();
+      g.translate(C.W / 2, py + 20);
+      g.rotate(k * 0.25);
+      g.globalAlpha = Math.min(0.35, k * 0.6);
+      g.fillStyle = '#ffd35a';
+      for (let i = 0; i < 14; i++) {
+        g.rotate((Math.PI * 2) / 14);
+        g.beginPath();
+        g.moveTo(0, 0);
+        g.lineTo(-38, -520);
+        g.lineTo(38, -520);
+        g.closePath();
+        g.fill();
+      }
       g.restore();
     }
-    // 胜负印章
-    const win = game.R.waves ? true : w === 0;
+    if (JQ.ui9(g, 'panel', px, py, pw, ph, 40, 30)) {
+      g.fillStyle = 'rgba(16,10,5,0.45)';
+      JQ.rr(g, px + 18, py + 18, pw - 36, ph - 36, 8);
+      g.fill();
+    } else panel(px, py, pw, ph, 'rgba(30,21,12,0.92)', '#c9a35a', 2.5);
+    // 印章盖下
     const word = game.R.waves ? '守关' : w === 0 ? (staged ? '通关' : '突围') : w === 1 ? '败北' : '平局';
+    const sk = Math.min(1, k / 0.35), sc = 1 + 1.4 * (1 - JQ.ease(sk));
     g.save();
-    g.translate(C.W / 2, py + 10);
+    g.translate(C.W / 2 + (sk < 1 ? 0 : Math.sin(k * 60) * Math.max(0, 0.5 - k) * 6), py + 12);
     g.rotate(-0.05);
-    JQ.rr(g, -110, -46, 220, 92, 14);
+    g.scale(sc, sc);
+    g.globalAlpha = Math.min(1, k * 4);
+    JQ.rr(g, -112, -48, 224, 96, 14);
     g.fillStyle = win ? '#a8281a' : w === 1 ? '#4a4a4a' : '#6a5a3a';
     g.fill();
     g.strokeStyle = '#f2d9a0';
     g.lineWidth = 3;
     g.stroke();
-    text(g, word, 0, 2, 54, '#fff1d0');
+    text(g, word, 0, 2, 56, '#fff1d0');
+    if (w === 1) {
+      // 裂纹
+      g.strokeStyle = 'rgba(20,20,20,0.7)';
+      g.lineWidth = 2;
+      g.beginPath();
+      g.moveTo(-60, -48);
+      g.lineTo(-30, -10);
+      g.lineTo(-44, 14);
+      g.lineTo(-10, 48);
+      g.moveTo(40, -48);
+      g.lineTo(26, -6);
+      g.lineTo(52, 30);
+      g.stroke();
+    }
     g.restore();
+    // 关卡星级
+    let y = py + 92;
+    if (staged && win && pg) {
+      for (let i = 0; i < 3; i++) {
+        const t0 = 0.45 + i * 0.22, kk = Math.max(0, Math.min(1, (k - t0) / 0.25));
+        const lit = i < pg.stars && kk > 0;
+        g.save();
+        g.translate(C.W / 2 + (i - 1) * 64, y + 22 - (i === 1 ? 8 : 0));
+        const s2 = lit ? 1 + 0.6 * (1 - JQ.ease(kk)) : 1;
+        g.scale(s2, s2);
+        starShape(0, 0, 24, lit ? '#ffd23f' : 'rgba(80,70,60,0.8)', lit ? '#8a5a10' : 'rgba(160,140,110,0.5)');
+        g.restore();
+      }
+      if (pg.newStars && k > 1.2) text(g, `新星 +${pg.newStars}`, C.W / 2 + 140, y + 24, 14, '#ffd23f', { font: 'sans-serif' });
+      y += 54;
+    } else y += 10;
     const sub = game.R.waves ? `守住 ${Math.max(0, game.wave - 1)} 波 · 最佳 ${rec(game.modeKey).best} 波` : staged ? `第 ${game.stage} 关` : game.mode.name;
-    text(g, sub, C.W / 2, py + 86, 30, '#ffe9a0', { stroke: '#2a1a08', strokeW: 4 });
+    text(g, sub, C.W / 2, y + 12, 28, '#ffe9a0', { stroke: '#2a1a08', strokeW: 4 });
     const t = Math.floor(game.time);
-    text(g, `${game.mode.name} · ${game.diff.name} · 用时 ${Math.floor(t / 60)}分${t % 60}秒`, C.W / 2, py + 120, 15, '#bfa878', { font: 'sans-serif', bold: false });
+    text(g, `${game.mode.name} · ${game.diff.name} · 用时 ${Math.floor(t / 60)}分${t % 60}秒`, C.W / 2, y + 42, 14, '#bfa878', { font: 'sans-serif', bold: false });
+    y += 62;
+    const roll = (v) => Math.round(v * Math.max(0, Math.min(1, (k - 0.3) / 0.8)));
+    // MVP
+    if (mv && (mv.hero || mv.unit)) {
+      const card = (x, item, tag) => {
+        if (!item) return;
+        const name = item.key;
+        const box = 64;
+        if (!JQ.ui9(g, 'card', x, y, box, box, 34, 14)) panel(x, y, box, box, '#f3ead3', '#6a4a20', 2);
+        text(g, name.length > 1 ? name : name, x + box / 2, y + box / 2 + 2, name.length > 1 ? 24 : 34, '#2a1a08');
+        text(g, tag, x + box + 10, y + 12, 13, '#ffcf5a', { align: 'left' });
+        text(g, `输出 ${roll(item.dmg).toLocaleString()}`, x + box + 10, y + 34, 15, '#fff3d6', { align: 'left', font: 'sans-serif' });
+        text(g, `${Math.round((item.dmg / mv.total) * 100)}% · 击杀 ${item.kills}`, x + box + 10, y + 54, 12, '#bfa878', { align: 'left', font: 'sans-serif', bold: false });
+      };
+      card(px + 40, mv.hero, 'MVP 英雄');
+      card(px + 330, mv.unit, '最强兵种');
+      y += 84;
+    }
     // 我/敌 对比条
     const A = game.sides[0].stats, B = game.sides[1].stats;
-    text(g, '我方', px + 120, py + 160, 17, '#8cc8ff', { font: 'sans-serif' });
-    text(g, '敌方', px + pw - 120, py + 160, 17, '#ff9a8a', { font: 'sans-serif' });
     [
       ['召唤', A.summoned, B.summoned],
       ['击杀', A.kills, B.kills],
       ['英雄出场', A.heroes, B.heroes],
-      ['大招', A.ults, B.ults],
       ['基地伤害', Math.round(A.baseDmg), Math.round(B.baseDmg)],
-    ].forEach(([label, x, y], i) => {
-      const ry = py + 200 + i * 54, tot = Math.max(1, x + y), half = 230;
-      text(g, label, C.W / 2, ry - 2, 17, '#e8dcc0', { font: 'sans-serif', bold: false });
+    ].forEach(([label, x0, y0], i) => {
+      const ry = y + i * 42, tot = Math.max(1, x0 + y0), half = 210;
+      const kk = Math.max(0, Math.min(1, (k - 0.3 - i * 0.08) / 0.6));
+      text(g, label, C.W / 2, ry, 14, '#e8dcc0', { font: 'sans-serif', bold: false });
       g.save();
-      JQ.rr(g, C.W / 2 - half, ry + 10, half * 2, 12, 6);
+      JQ.rr(g, C.W / 2 - half, ry + 10, half * 2, 10, 5);
       g.fillStyle = 'rgba(255,255,255,0.08)';
       g.fill();
       g.fillStyle = '#3d8bff';
-      JQ.rr(g, C.W / 2 - (half * x) / tot, ry + 10, (half * x) / tot, 12, 6);
-      if (x) g.fill();
+      const wa = ((half * x0) / tot) * kk, wb = ((half * y0) / tot) * kk;
+      if (wa > 1) (JQ.rr(g, C.W / 2 - wa, ry + 10, wa, 10, 5), g.fill());
       g.fillStyle = '#e0503a';
-      JQ.rr(g, C.W / 2, ry + 10, (half * y) / tot, 12, 6);
-      if (y) g.fill();
+      if (wb > 1) (JQ.rr(g, C.W / 2, ry + 10, wb, 10, 5), g.fill());
       g.restore();
-      text(g, String(x), C.W / 2 - half - 6, ry + 16, 20, '#cfe6ff', { align: 'right', font: 'sans-serif' });
-      text(g, String(y), C.W / 2 + half + 6, ry + 16, 20, '#ffd2c8', { align: 'left', font: 'sans-serif' });
+      text(g, String(roll(x0)), C.W / 2 - half - 8, ry + 15, 17, '#cfe6ff', { align: 'right', font: 'sans-serif' });
+      text(g, String(roll(y0)), C.W / 2 + half + 8, ry + 15, 17, '#ffd2c8', { align: 'left', font: 'sans-serif' });
     });
-    let ly = py + 486;
-    if (rw && staged) {
-      let line;
-      if (rw.win) line = rw.max ? `已抵达第 ${C.MAX_STAGE} 关！` : `解锁第 ${rw.next} 关`;
-      else line = '再试一次，换个阵容或天赋';
-      text(g, line, C.W / 2, ly, 22, rw.win ? '#ffd23f' : '#f0c0a0', { stroke: '#3a2a10', strokeW: 4 });
-      if (rw.coins) text(g, `金币 +${rw.coins}${rw.shop ? ' · 商店已刷新' : ''}`, C.W / 2, ly + 30, 15, '#ffd23f', { font: 'sans-serif', bold: false });
-    } else if (rw && rw.coins) text(g, `获得 ${rw.coins} 金币${rw.shop ? ' · 商店已刷新' : ''}`, C.W / 2, ly, 22, '#ffd23f', { stroke: '#3a2a10', strokeW: 4 });
+    y += 4 * 42 + 6;
+    // 奖励：主公经验、将魂、宝箱、金币
+    if (pg) {
+      g.save();
+      g.fillStyle = 'rgba(255,230,170,0.08)';
+      JQ.rr(g, px + 36, y, pw - 72, 132, 10);
+      g.fill();
+      g.restore();
+      const xpK = Math.max(0, Math.min(1, (k - 0.8) / 0.8));
+      text(g, `主公 Lv${prog.lv}`, px + 52, y + 20, 17, '#ffe9a0', { align: 'left' });
+      g.save();
+      JQ.rr(g, px + 160, y + 14, 300, 10, 5);
+      g.fillStyle = 'rgba(255,255,255,0.12)';
+      g.fill();
+      JQ.rr(g, px + 160, y + 14, Math.max(6, 300 * (prog.xp / lvNeed(prog.lv)) * xpK), 10, 5);
+      g.fillStyle = '#e6b04a';
+      g.fill();
+      g.restore();
+      text(g, `+${pg.xp} 经验` + (pg.lvUps ? `  升级！` : ''), px + 474, y + 20, 14, pg.lvUps ? '#ffd23f' : '#d8c8a0', { align: 'left', font: 'sans-serif' });
+      const sl = pg.souls.slice(0, 3).map((x) => `${x.name} +${x.add}` + (x.to > x.from ? `（${x.to}★）` : ''));
+      text(g, sl.length ? '将魂  ' + sl.join('   ') : '将魂  本局没有英雄出场', px + 52, y + 54, 14, '#f0e4c8', { align: 'left', font: 'sans-serif', bold: false });
+      const up = pg.souls.find((x) => x.to > x.from);
+      const extra = [];
+      if (up && k > 1.4) extra.push(`★ ${up.name} 升到 ${up.to} 星：攻击/血量 +${up.to * 2}%`);
+      if (pg.chest) extra.push(`星级宝箱 ×${pg.chest}：万能将魂 +${30 * pg.chest}`);
+      if (pg.lvUps) extra.push(`升级奖励：万能将魂 +${20 * pg.lvUps}`);
+      if (rw && rw.coins) extra.push(`金币 +${rw.coins}${rw.shop ? ' · 商店已刷新' : ''}`);
+      extra.slice(0, 2).forEach((l, i) => text(g, l, px + 52, y + 84 + i * 26, 14, '#ffd23f', { align: 'left', font: 'sans-serif' }));
+      y += 146;
+    }
+    if (!win && w === 1 && k > 1) text(g, tipOnLose(), C.W / 2, y + 2, 14, '#f0c0a0', { font: 'sans-serif', bold: false });
+    y += 20;
     const canNext = rw && rw.win && !rw.max && staged;
-    button(120, py + 540, 480, 88, canNext ? `下一关 · 第 ${rw.next} 关` : staged ? `重试第 ${game.stage} 关` : '再来一局', () => {
+    button(110, y, 500, 84, canNext ? `下一关 · 第 ${rw.next} 关` : staged ? `重试第 ${game.stage} 关` : '再来一局', () => {
       if (canNext) setStage(rw.next);
       newGame();
     }, { on: true, size: canNext ? 32 : 34 });
-    // 次级操作并排
     const sec = [];
     if (staged) sec.push(['选 关', () => openStages()]);
     if (game.modeKey === 'fate') sec.push(['天赋商店', () => (screen = 'talents')]);
     sec.push(['返回主页', () => (screen = 'menu')]);
-    const sw = (480 - (sec.length - 1) * 16) / sec.length;
-    sec.forEach(([label, fn], i) => button(120 + i * (sw + 16), py + 648, sw, 64, label, fn, { size: 24 }));
+    const sw = (500 - (sec.length - 1) * 14) / sec.length;
+    sec.forEach(([label, fn], i) => button(110 + i * (sw + 14), y + 98, sw, 60, label, fn, { size: 22 }));
+    // 花瓣
+    if (win && k < 6) {
+      g.save();
+      for (let i = 0; i < 36; i++) {
+        const sx = ((i * 197) % 760) - 20, sp = 60 + (i % 5) * 25;
+        const yy = -JQ.VIEW.top + ((k * sp + i * 83) % (C.H + JQ.VIEW.top + JQ.VIEW.bot));
+        g.globalAlpha = Math.min(1, (6 - k) / 1.5) * 0.85;
+        g.fillStyle = i % 3 ? '#ffb7c8' : '#ffd23f';
+        g.beginPath();
+        g.ellipse(sx + Math.sin(k * 2 + i) * 20, yy, 6, 3.5, k * 2 + i, 0, Math.PI * 2);
+        g.fill();
+      }
+      g.restore();
+    }
+  }
+  // 输了给一句有用的提示
+  function tipOnLose() {
+    const s = game.sides[0];
+    const formed = new Set(s.board.links.map((l) => l.hero));
+    for (const b of JQ.packBonds(s.pack)) {
+      const n = b.heroes.filter((h) => formed.has(h)).length;
+      if (n && n < b.tiers[0].n) return `差一点就能凑成「${b.name}」：${b.heroes.filter((h) => !formed.has(h)).join('、')}`;
+    }
+    if (s.stats.heroes < 2) return '试试多凑几位英雄，两个字左右相邻就能合成';
+    return '小兵到 5 级每次召 4 个，是个关键门槛';
   }
 
   // ---------- 主循环 ----------

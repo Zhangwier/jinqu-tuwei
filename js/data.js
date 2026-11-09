@@ -70,6 +70,7 @@
     sanguo: ['刀', '盾', '弓', '枪', '剑', '刺', '骑', '弩'],
     xiyou: ['妖', '魔', '猴', '僧', '龙', '鬼', '弓', '盾'],
     tang: ['陌', '甲', '弩', '骑', '枪', '弓', '剑', '刀'],
+    song: ['刀', '盾', '弓', '弩', '枪', '骑', '甲', '刺'],
     custom: ['刀', '盾', '弓', '枪', '剑', '刺', '骑', '弩'],
   };
   JQ.PACK_UNITS = PACK_UNITS;
@@ -279,6 +280,71 @@
       passive: { name: '胡骑', desc: '攻击 +12%', atkMult: 1.12 },
       skill: { name: '铁骑冲锋', cd: 7, desc: '冲锋 2.6 倍伤害并击退', do: [{ t: 'dash', mult: 2.6, knock: true }] },
       ult: { name: '渔阳鼙鼓', cd: 17, desc: '召来 5 名精兵，周围 2.2 倍伤害', do: [{ t: 'summon', unit: ['刺', '枪'], n: 5, fx: 'portal' }, { t: 'aoe', at: 'self', r: 130, mult: 2.2, fx: 'warcry', big: true }] } }),
+    // ===== 宋朝 ===== 共用字：岳（岳飞/岳云）、昭（延昭/展昭）、宗（宗保/宗泽）
+    H('岳飞', 'song', { role: '战士', hp: 1400, atk: 54, range: 34, rate: 0.95, speed: 54, cd: 18, aura: '#c83c2c',
+      passive: { name: '精忠', desc: '攻击 +15%，身边 160 内友军攻击 +10%', atkMult: 1.15, auraAtk: { r: 160, pct: 0.1 } },
+      skill: { name: '沥泉枪', cd: 7, desc: '沥泉枪直刺，直线 2.6 倍伤害', do: [{ t: 'line', len: 220, width: 34, mult: 2.6, fx: 'wave' }] },
+      ult: { name: '还我河山', cd: 17, desc: '冲锋 4 倍伤害并击退，友军攻击 +30% 持续 6 秒', range: 320, do: [{ t: 'dash', mult: 4, knock: true }, { t: 'buff', r: 300, atk: 1.3, dur: 6, fx: 'warcry', text: '精忠' }] } }),
+    H('岳云', 'song', { role: '刺客', hp: 1100, atk: 52, range: 28, rate: 0.85, speed: 68, cd: 16, assassin: true, aura: '#e06030',
+      passive: { name: '赢官人', desc: '20% 几率暴击 2.2 倍', crit: 0.2, critMult: 2.2 },
+      skill: { name: '双锤', cd: 6, desc: '双锤砸晕最近敌人 1 秒，2.4 倍伤害', do: [{ t: 'stunTarget', mult: 2.4, dur: 1, fx: 'pulse' }] },
+      ult: { name: '锤震朱仙镇', cd: 16, desc: '跃入敌群砸地，4.5 倍伤害并震晕', range: 360, do: [{ t: 'leap', r: 140, mult: 4.5, stun: 1.2, glyph: '锤' }] } }),
+    H('杨业', 'song', { role: '统帅', hp: 1500, atk: 46, range: 32, rate: 1.0, speed: 50, cd: 18, aura: '#d8b040',
+      passive: { name: '金刀', desc: '身边 170 内友军受到伤害 -12%', auraDr: { r: 170, pct: 0.12 } },
+      skill: { name: '金刀令', cd: 8, desc: '周围友军攻击 +25% 持续 5 秒', do: [{ t: 'buff', r: 220, atk: 1.25, dur: 5, fx: 'warcry', text: '令' }] },
+      ult: { name: '血战陈家谷', cd: 18, desc: '3 秒无敌、攻击 ×1.8，并震荡身边敌人', range: 160, do: [{ t: 'buff', self: true, atk: 1.8, dur: 5, invuln: 3, fx: 'warcry', text: '血战' }, { t: 'aoe', at: 'self', r: 150, mult: 2.5, fx: 'shock' }] } }),
+    H('延昭', 'song', { role: '统帅', hp: 1400, atk: 48, range: 46, rate: 1.0, speed: 52, cd: 17, aura: '#5a8ad8',
+      passive: { name: '六郎', desc: '对英雄伤害 +30%', heroBonus: 0.3 },
+      skill: { name: '杨家枪', cd: 7, desc: '枪芒贯穿直线敌人 2.6 倍', do: [{ t: 'pierce', mult: 2.6, width: 24, kind: 'crescent' }] },
+      ult: { name: '三关镇守', cd: 17, desc: '嘲讽周围敌人并获得护盾，召来 2 枪 2 盾', range: 200, do: [{ t: 'taunt', r: 180, dur: 2.5, fx: 'warcry' }, { t: 'shield', self: 0.35 }, { t: 'summon', unit: ['枪', '盾'], n: 4, fx: 'portal' }] } }),
+    H('宗保', 'song', { role: '射手', hp: 900, atk: 46, range: 230, rate: 1.0, speed: 50, cd: 16, ranged: true, aura: '#7ac0ff',
+      passive: { name: '神射', desc: '攻击 160 外的敌人伤害 +40%', longShot: 0.4 },
+      skill: { name: '穿杨', cd: 6, desc: '射出贯穿重箭 2.8 倍', do: [{ t: 'pierce', mult: 2.8, width: 16, speed: 760, life: 0.9, kind: 'arrow' }] },
+      ult: { name: '天门阵', cd: 17, desc: '布下天门阵 3 秒，阵中敌人受伤并定身', range: 320, do: [{ t: 'zone', at: 'densest', r: 150, dur: 3, tick: 0.4, mult: 0.9, stun: true, glyphs: '天门大阵' }] } }),
+    H('桂英', 'song', { role: '战士', hp: 1350, atk: 50, range: 34, rate: 0.9, speed: 58, cd: 17, aura: '#ff5a8a',
+      passive: { name: '挂帅', desc: '越残血越凶，最多攻击 +50%', rage: 0.5 },
+      skill: { name: '穆柯寨', cd: 6, desc: '刀花横扫身边 2.2 倍', range: 95, do: [{ t: 'aoe', at: 'self', r: 95, mult: 2.2, fx: 'spin' }] },
+      ult: { name: '大破天门', cd: 16, desc: '连斩 5 名敌人，每击 2.6 倍', range: 300, do: [{ t: 'chain', n: 5, mult: 2.6, fx: 'tangblade' }] } }),
+    H('宗泽', 'song', { role: '坦克', hp: 1850, atk: 36, range: 30, rate: 1.0, speed: 44, cd: 16, aura: '#8a9a7a',
+      passive: { name: '留守', desc: '受到伤害 -15%，每秒回 0.8% 血', dr: 0.15, regen: 0.008 },
+      skill: { name: '坚守东京', cd: 8, desc: '嘲讽周围敌人 2.5 秒并获得 30% 护盾', range: 160, do: [{ t: 'taunt', r: 160, dur: 2.5, fx: 'ring' }, { t: 'shield', self: 0.3 }] },
+      ult: { name: '三呼过河', cd: 18, desc: '全军回血 20%，攻击 +30% 持续 6 秒', need: 'ally', do: [{ t: 'heal', r: 320, pct: 0.2, fx: 'lotus' }, { t: 'buff', r: 320, atk: 1.3, dur: 6, fx: 'warcry', text: '过河' }] } }),
+    H('世忠', 'song', { role: '坦克', hp: 1800, atk: 42, range: 30, rate: 1.0, speed: 46, cd: 16, aura: '#6a7a9a',
+      passive: { name: '泼韩五', desc: '远程伤害 -40%，反弹 20% 近战伤害', rangedReduce: 0.4, thorns: 0.2 },
+      skill: { name: '拐子马', cd: 7, desc: '短冲撞 2.2 倍并击退', do: [{ t: 'dash', mult: 2.2, dur: 0.3, knock: true }] },
+      ult: { name: '黄天荡', cd: 17, desc: '困敌黄天荡 4 秒，持续受伤并大幅减速', range: 280, do: [{ t: 'zone', at: 'densest', r: 170, dur: 4, tick: 0.4, mult: 0.6, slow: 0.6, glyphs: '黄天荡' }] } }),
+    H('红玉', 'song', { role: '辅助', hp: 850, atk: 28, range: 170, rate: 1.0, speed: 48, cd: 16, ranged: true, aura: '#ff4040',
+      passive: { name: '擂鼓', desc: '身边 200 内友军攻击 +15%', auraAtk: { r: 200, pct: 0.15 } },
+      skill: { name: '金山鼓', cd: 7, desc: '周围友军攻击 +25% 持续 5 秒', do: [{ t: 'buff', r: 240, atk: 1.25, dur: 5, fx: 'warcry', text: '鼓' }] },
+      ult: { name: '擂鼓战金山', cd: 18, desc: '全军攻击 +40% 持续 6 秒，并回血 15%', need: 'ally', do: [{ t: 'buff', r: 320, atk: 1.4, dur: 6, fx: 'warcry', text: '战鼓' }, { t: 'heal', r: 320, pct: 0.15 }] } }),
+    H('狄青', 'song', { role: '战士', hp: 1300, atk: 50, range: 32, rate: 0.95, speed: 56, cd: 17, aura: '#a0a0b0',
+      passive: { name: '铜面', desc: '20% 闪避普攻，对英雄伤害 +20%', dodge: 0.2, heroBonus: 0.2 },
+      skill: { name: '夜袭', cd: 7, desc: '闪身突袭，3 倍伤害并眩晕 1 秒', range: 300, do: [{ t: 'blink', r: 110, mult: 3, stun: 1, fx: 'clone' }] },
+      ult: { name: '昆仑关', cd: 16, desc: '三连旋斩，每段 2.4 倍，期间减伤 40%', range: 140, do: [{ t: 'spins', n: 3, r: 120, mult: 2.4, dr: 0.4 }] } }),
+    H('包拯', 'song', { role: '辅助', hp: 1100, atk: 30, range: 160, rate: 1.0, speed: 46, cd: 17, ranged: true, magic: true, aura: '#4a4a6a',
+      passive: { name: '铁面', desc: '看破隐身，受到伤害 -15%', trueSight: true, dr: 0.15 },
+      skill: { name: '龙头铡', cd: 7, desc: '铡刀落下，2.4 倍伤害并眩晕 1 秒', do: [{ t: 'aoe', at: 'target', r: 90, mult: 2.4, stun: 1, fx: 'ink', text: '铡' }] },
+      ult: { name: '开封府', cd: 18, desc: '明镜高悬，大范围 3 倍伤害并眩晕 2 秒', range: 320, do: [{ t: 'aoe', at: 'densest', r: 180, mult: 3, stun: 2, fx: 'ink', big: true, text: '正' }] } }),
+    H('展昭', 'song', { role: '刺客', hp: 1000, atk: 54, range: 28, rate: 0.8, speed: 74, cd: 16, assassin: true, aura: '#3a6ad8',
+      passive: { name: '御猫', desc: '30% 几率闪避普通攻击', dodge: 0.3 },
+      skill: { name: '巨阙', cd: 6, desc: '闪到后排刺杀远程，3 倍伤害', do: [{ t: 'chain', n: 1, mult: 3, prefer: 'ranged' }] },
+      ult: { name: '南侠', cd: 16, desc: '连刺 6 名敌人，每击 2.4 倍', range: 320, do: [{ t: 'chain', n: 6, mult: 2.4, fx: 'tangblade' }] } }),
+    H('苏轼', 'song', { role: '法师', hp: 850, atk: 32, range: 190, rate: 1.0, speed: 46, cd: 18, ranged: true, magic: true, proj: 'water', aura: '#4a9ac0',
+      passive: { name: '东坡', desc: '普攻附带 25% 减速，持续 1.5 秒', slowOnHit: { pct: 0.25, dur: 1.5 } },
+      skill: { name: '赤壁赋', cd: 7, desc: '江涛直线 2 倍伤害并减速', do: [{ t: 'line', len: 320, width: 80, mult: 2, slow: 0.3, fx: 'wave' }] },
+      ult: { name: '大江东去', cd: 18, desc: '大江席卷战场，3.8 倍伤害并减速', range: 400, do: [{ t: 'line', len: 600, width: 140, mult: 3.8, slow: 0.4, fx: 'wave', big: true }] } }),
+    H('清照', 'song', { role: '法师', hp: 780, atk: 32, range: 190, rate: 1.0, speed: 46, cd: 18, ranged: true, magic: true, proj: 'moonshard', aura: '#e0a0c0',
+      passive: { name: '易安', desc: '普攻 12% 几率魅惑敌人 1 秒', charmOnHit: 0.12 },
+      skill: { name: '声声慢', cd: 7, desc: '落花 2 倍伤害并魅惑 1 秒', do: [{ t: 'aoe', at: 'target', r: 100, mult: 2, charm: 1, fx: 'petals' }] },
+      ult: { name: '人比黄花瘦', cd: 18, desc: '大范围 3 倍伤害并魅惑 1.6 秒', range: 300, do: [{ t: 'aoe', at: 'densest', r: 190, mult: 3, charm: 1.6, fx: 'petals', big: true }] } }),
+    H('武松', 'song', { role: '战士', hp: 1450, atk: 56, range: 30, rate: 0.95, speed: 54, cd: 17, aura: '#d07020',
+      passive: { name: '打虎', desc: '对英雄伤害 +40%', heroBonus: 0.4 },
+      skill: { name: '醉拳', cd: 6, desc: '醉拳横扫身边并击退', range: 90, do: [{ t: 'aoe', at: 'self', r: 90, mult: 2.2, knock: 180, fx: 'shock' }] },
+      ult: { name: '景阳冈', cd: 16, desc: '跃入敌群，5 倍伤害并震晕', range: 360, do: [{ t: 'leap', r: 140, mult: 5, stun: 1.2, glyph: '虎' }] } }),
+    H('林冲', 'song', { role: '战士', hp: 1350, atk: 50, range: 46, rate: 0.95, speed: 56, cd: 17, aura: '#3a5a8a',
+      passive: { name: '豹子头', desc: '20% 几率暴击 2 倍', crit: 0.2, critMult: 2 },
+      skill: { name: '丈八蛇矛', cd: 7, desc: '矛芒贯穿直线敌人 2.6 倍', do: [{ t: 'pierce', mult: 2.6, width: 26, kind: 'crescent' }] },
+      ult: { name: '风雪夜奔', cd: 16, desc: '向前冲锋 4.2 倍伤害并击退', range: 320, do: [{ t: 'dash', mult: 4.2, knock: true }] } }),
     // ===== 自定义专属 =====
     H('夏夏', 'custom', { role: '特殊', hp: 1200, atk: 36, range: 170, rate: 1.0, speed: 48, cd: 16, ranged: true, magic: true, aura: '#ffd166',
       passive: { name: '巧手', desc: '每 1 秒自动合成两张同级小兵；棋盘上每合成一次，全军小兵攻击和血量 +3%（最多 12 层）', autoMerge: { every: 1 } },
@@ -294,7 +360,7 @@
     xuanhuan: { name: '玄幻', open: false },
     mofa: { name: '魔法', open: false },
     tang: { name: '唐朝', open: true },
-    song: { name: '宋朝', open: false },
+    song: { name: '宋朝', open: true },
     custom: { name: '自定义', open: true },
   };
   for (const [k, p] of Object.entries(JQ.PACKS)) {
@@ -331,6 +397,62 @@
   };
   JQ.cardMaxLevel = (card) => (card && card.kind === 'unit' ? Infinity : C.MAX_LEVEL);
   JQ.cardLevelOk = (card) => !!card && card.level < JQ.cardMaxLevel(card);
+
+
+  // ---------- 英雄羁绊 ----------
+  // 指定英雄同时在棋盘上合成（同一方）就生效；tiers 按凑齐的人数分档，取能达到的最高档。
+  // 加成：atk/hp/dr/crit 加给成员英雄；cd = 成员技能/大招冷却缩短比例；unitAtk/unitHp 加给全军小兵；buns = 每 every 秒产包子。
+  // 羁绊故意多用不共字的英雄，给“只挑共用字”以外的阵容一个理由。
+  JQ.BONDS = [
+    { id: 'taoyuan', name: '桃园结义', heroes: ['刘备', '关羽', '张飞'], tiers: [{ n: 3, atk: 0.2, hp: 0.2 }] },
+    { id: 'wuhu', name: '五虎上将', heroes: ['关羽', '张飞', '赵云', '黄忠'], tiers: [{ n: 2, crit: 0.1 }, { n: 4, crit: 0.1, atk: 0.25 }] },
+    { id: 'yushui', name: '如鱼得水', heroes: ['刘备', '孔明'], tiers: [{ n: 2, cd: 0.2 }] },
+    { id: 'weiwu', name: '魏武挥鞭', heroes: ['曹操', '曹仁', '典韦', '许褚'], tiers: [{ n: 2, dr: 0.1 }, { n: 4, dr: 0.1, unitAtk: 0.12 }] },
+    { id: 'jiangdong', name: '江东英杰', heroes: ['孙策', '孙权', '周瑜', '吕蒙'], tiers: [{ n: 2, cd: 0.15 }, { n: 4, cd: 0.15, buns: { n: 4, every: 8 } }] },
+    { id: 'lvbu', name: '人中吕布', heroes: ['吕布', '貂蝉'], tiers: [{ n: 2, atk: 0.25 }] },
+    { id: 'qujing', name: '取经师徒', heroes: ['悟空', '八戒', '沙僧', '唐僧'], tiers: [{ n: 2, hp: 0.15 }, { n: 4, hp: 0.15, atk: 0.2, dr: 0.1 }] },
+    { id: 'tianting', name: '天庭众神', heroes: ['玉帝', '太白', '二郎', '哪吒'], tiers: [{ n: 2, cd: 0.15 }, { n: 4, cd: 0.15, unitHp: 0.15 }] },
+    { id: 'huoyan', name: '火焰山', heroes: ['牛魔', '铁扇', '红孩'], tiers: [{ n: 3, atk: 0.25 }] },
+    { id: 'longgong', name: '龙宫', heroes: ['龙王', '白龙'], tiers: [{ n: 2, hp: 0.2 }] },
+    { id: 'lingshan', name: '灵山', heroes: ['如来', '观音'], tiers: [{ n: 2, cd: 0.2 }] },
+    { id: 'guanghan', name: '广寒旧梦', heroes: ['嫦娥', '八戒'], tiers: [{ n: 2, atk: 0.15 }] },
+    { id: 'lingyan', name: '凌烟阁', heroes: ['李靖', '秦琼', '敬德', '咬金'], tiers: [{ n: 2, dr: 0.1 }, { n: 4, dr: 0.1, atk: 0.2 }] },
+    { id: 'shitan', name: '盛唐诗坛', heroes: ['李白', '杜甫', '王维', '居易'], tiers: [{ n: 2, cd: 0.15 }, { n: 4, cd: 0.15, atk: 0.25 }] },
+    { id: 'tangjiang', name: '大唐名将', heroes: ['仁贵', '子仪'], tiers: [{ n: 2, atk: 0.2 }] },
+    { id: 'wuzhou', name: '武周', heroes: ['则天', '仁杰'], tiers: [{ n: 2, hp: 0.2 }] },
+    { id: 'yuyang', name: '渔阳鼙鼓', heroes: ['玉环', '禄山'], tiers: [{ n: 2, atk: 0.25 }] },
+    { id: 'xuanmen', name: '玄门', heroes: ['天罡', '玄奘'], tiers: [{ n: 2, cd: 0.2 }] },
+    { id: 'yuejia', name: '岳家军', heroes: ['岳飞', '岳云'], tiers: [{ n: 2, atk: 0.2, unitAtk: 0.08 }] },
+    { id: 'yangjia', name: '杨家将', heroes: ['杨业', '延昭', '宗保', '桂英'], tiers: [{ n: 2, hp: 0.15 }, { n: 4, hp: 0.15, atk: 0.2 }] },
+    { id: 'zhongxing', name: '中兴名将', heroes: ['岳飞', '世忠', '宗泽'], tiers: [{ n: 3, dr: 0.15 }] },
+    { id: 'jinshan', name: '金山擂鼓', heroes: ['世忠', '红玉'], tiers: [{ n: 2, atk: 0.15, hp: 0.15 }] },
+    { id: 'kaifeng', name: '开封府', heroes: ['包拯', '展昭'], tiers: [{ n: 2, atk: 0.2 }] },
+    { id: 'renzong', name: '仁宗盛世', heroes: ['包拯', '狄青'], tiers: [{ n: 2, hp: 0.2 }] },
+    { id: 'liangshan', name: '梁山好汉', heroes: ['武松', '林冲'], tiers: [{ n: 2, crit: 0.15 }] },
+    { id: 'citan', name: '词坛双璧', heroes: ['苏轼', '清照'], tiers: [{ n: 2, cd: 0.2 }] },
+    // 跨卡包：只有自定义卡包凑得出
+    { id: 'jinchan', name: '金蝉转世', heroes: ['唐僧', '玄奘'], tiers: [{ n: 2, hp: 0.25 }] },
+    { id: 'shixian', name: '诗仙词圣', heroes: ['李白', '苏轼'], tiers: [{ n: 2, atk: 0.2 }] },
+    { id: 'qiaoshou', name: '巧夺天工', heroes: ['夏夏', '孔明'], tiers: [{ n: 2, unitAtk: 0.08, unitHp: 0.08 }] },
+  ];
+  JQ.BOND_BY_HERO = {};
+  for (const b of JQ.BONDS) for (const h of b.heroes) (JQ.BOND_BY_HERO[h] = JQ.BOND_BY_HERO[h] || []).push(b);
+  // 卡包里能凑出来的羁绊（成员全在包里）
+  JQ.packBonds = (pack) => JQ.BONDS.filter((b) => b.heroes.every((h) => JQ.heroInPack(h, pack)));
+  // 一档加成写成人话
+  JQ.bondTierText = (t) => {
+    const out = [];
+    const pc = (v) => Math.round(v * 100) + '%';
+    if (t.atk) out.push('攻击 +' + pc(t.atk));
+    if (t.hp) out.push('血量 +' + pc(t.hp));
+    if (t.dr) out.push('减伤 ' + pc(t.dr));
+    if (t.crit) out.push('暴击 +' + pc(t.crit));
+    if (t.cd) out.push('冷却 -' + pc(t.cd));
+    if (t.unitAtk) out.push('全军小兵攻击 +' + pc(t.unitAtk));
+    if (t.unitHp) out.push('全军小兵血量 +' + pc(t.unitHp));
+    if (t.buns) out.push('每 ' + t.buns.every + ' 秒 +' + t.buns.n + ' 包子');
+    return out.join('，');
+  };
 
   // 字 → 能参与的英雄（全卡包）
   JQ.CHAR_HEROES = {};
