@@ -703,6 +703,7 @@
       if (game) game.skillToast = skillToast;
     }, { size: 26 });
     button(370, 1006, 290, 60, '自定义卡包', () => openCustom(), { size: 26 });
+    button(210, 1068, 300, 42, '测试场', () => openTestLab(), { size: 20 });
   }
 
   // ---------- 选关 ----------
@@ -793,6 +794,211 @@
     button(260, 770, 200, 50, '返 回', () => (screen = 'menu'), { size: 20 });
   }
 
+  // ---------- 测试场：自定义双方阵容，自动打一场看结果 ----------
+  const TEST_KEY = 'jq_testlab';
+  const testView = { g, speed: 1, test: true, selected: -1, selectedCell: null, info: '', infoT: 0, heldCard: null, dragFrom: null, dragPos: null, hoverCell: null, target: null, anims: [], shopAnim: null, bunPop: 0 };
+  const testLab = { blue: [], red: [], active: 0, tab: 'hero', page: 0, heroLv: 3, unitLv: 5, msg: '', game: null, result: null, acc: 0, loaded: false };
+  const testDefault = () => [
+    { kind: 'hero', key: '夏夏' },
+    { kind: 'unit', key: '刀' },
+    { kind: 'unit', key: '刀' },
+    { kind: 'unit', key: '刀' },
+    { kind: 'unit', key: '刀' },
+  ];
+  function ensureTestLoaded() {
+    if (testLab.loaded) return;
+    testLab.loaded = true;
+    try {
+      const x = JSON.parse(localStorage.getItem(TEST_KEY) || 'null');
+      if (x) {
+        const ok = (e) => e && (e.kind === 'hero' ? !!HEROES[e.key] : e.kind === 'unit' ? !!UNITS[e.key] : false);
+        testLab.blue = (x.blue || []).filter(ok).slice(0, 8);
+        testLab.red = (x.red || []).filter(ok).slice(0, 8);
+        testLab.heroLv = Math.max(1, Math.min(5, x.heroLv || 3));
+        testLab.unitLv = Math.max(1, Math.min(5, x.unitLv || 5));
+      }
+    } catch (e) {}
+    if (!testLab.blue.length && !testLab.red.length) (testLab.blue = testDefault()), (testLab.red = testDefault().map((e) => (e.kind === 'hero' ? { kind: 'hero', key: '张飞' } : { kind: 'unit', key: '刀' })));
+  }
+  function saveTest() {
+    localStorage.setItem(TEST_KEY, JSON.stringify({ blue: testLab.blue, red: testLab.red, heroLv: testLab.heroLv, unitLv: testLab.unitLv }));
+  }
+  function openTestLab() {
+    ensureTestLoaded();
+    testLab.msg = '';
+    screen = 'testlab';
+  }
+  function testTeam() {
+    return testLab.active ? testLab.red : testLab.blue;
+  }
+  function testHas(key) {
+    return testTeam().some((e) => e.key === key);
+  }
+  function addTest(kind, key) {
+    const team = testTeam();
+    if (team.length >= 8) return (testLab.msg = '每队最多 8 个');
+    team.push({ kind, key });
+    testLab.msg = '';
+    saveTest();
+  }
+  function removeTest(team, i) {
+    team.splice(i, 1);
+    saveTest();
+  }
+  function randomTestTeam() {
+    const team = testTeam();
+    const hs = Object.keys(HEROES), us = JQ.ALL_UNITS;
+    team.length = 0;
+    for (let i = 0; i < 4; i++) team.push({ kind: 'hero', key: hs[Math.floor(Math.random() * hs.length)] });
+    for (let i = 0; i < 4; i++) team.push({ kind: 'unit', key: us[Math.floor(Math.random() * us.length)] });
+    testLab.msg = '';
+    saveTest();
+  }
+  function clearTestTeam() {
+    testTeam().length = 0;
+    testLab.msg = '';
+    saveTest();
+  }
+  function cycleTestLevel(which) {
+    if (which === 'hero') testLab.heroLv = (testLab.heroLv % 5) + 1;
+    else testLab.unitLv = (testLab.unitLv % 5) + 1;
+    saveTest();
+  }
+  function testAlive(side) {
+    return testLab.game ? testLab.game.units.filter((u) => u.side === side && u.hp > 0 && !u.isOutpost) : [];
+  }
+  function testHp(side) {
+    const us = testAlive(side);
+    if (!us.length) return 0;
+    let hp = 0, max = 0;
+    for (const u of us) (hp += Math.max(0, u.hp)), (max += u.maxHp || 1);
+    return max ? hp / max : 0;
+  }
+  function spawnTestTeam(g, side, team) {
+    const s = g.sides[side];
+    let front = 0, back = 0;
+    for (const e of team) {
+      const d = e.kind === 'hero' ? HEROES[e.key] : UNITS[e.key];
+      const isBack = !!(d.ranged || d.assassin || (e.kind === 'hero' && (d.role === '辅助' || d.role === '法师' || d.role === '射手' || d.role === '特殊')));
+      const idx = isBack ? back++ : front++;
+      const x = 300 + (idx % 4) * 40;
+      const y = (side === 0 ? (isBack ? 660 : 620) : isBack ? 500 : 540) + Math.floor(idx / 4) * 14;
+      if (e.kind === 'hero') {
+        const h = g.spawnHero(s, e.key, testLab.heroLv, x, { y });
+        h.ultT = 0;
+        h.skillT = 0;
+        h.atkT = 0.2;
+      } else {
+        const u = g.spawnUnit(s, e.key, testLab.unitLv, x, { y });
+        u.atkT = 0.2;
+      }
+    }
+  }
+  function startTest() {
+    if (!testLab.blue.length || !testLab.red.length) return (testLab.msg = '双方至少各放 1 个单位');
+    const g = new JQ.Game({ seed: (Math.random() * 1e9) | 0, pack: 'sanguo' });
+    g.R.time = 1e9;
+    g.R.overtime = 0;
+    spawnTestTeam(g, 0, testLab.blue);
+    spawnTestTeam(g, 1, testLab.red);
+    testLab.game = g;
+    testLab.acc = 0;
+    testLab.result = null;
+    testLab.msg = '';
+    screen = 'testplay';
+  }
+  function finishTest() {
+    const g = testLab.game;
+    if (!g) return;
+    const a = testAlive(0).length, b = testAlive(1).length;
+    let winner;
+    if (g.over) winner = g.winner;
+    else if (!a && !b) winner = -1;
+    else if (!a) winner = 1;
+    else if (!b) winner = 0;
+    else {
+      const ha = testHp(0), hb = testHp(1);
+      winner = Math.abs(ha - hb) < 1e-6 ? -1 : ha > hb ? 0 : 1;
+    }
+    testLab.result = { winner, time: g.time, blue: { alive: a, hp: testHp(0) }, red: { alive: b, hp: testHp(1) } };
+    screen = 'testover';
+  }
+  function drawTestTeam(idx, x, y, w, h) {
+    const team = idx ? testLab.red : testLab.blue;
+    const color = idx ? '#ff6a4a' : '#5ab0ff';
+    const active = testLab.active === idx;
+    panel(x, y, w, h, active ? 'rgba(255,240,210,0.10)' : 'rgba(255,240,210,0.04)', active ? color : 'rgba(255,240,210,0.25)', active ? 2 : 1.2);
+    text(g, `${idx ? '红方' : '蓝方'} ${team.length}/8`, x + 12, y + 18, 16, color, { align: 'left' });
+    if (!team.length) text(g, '点下方卡加入', x + w / 2, y + 76, 13, '#9a8f7a', { bold: false });
+    team.forEach((e, i) => {
+      const bx = x + 8 + (i % 4) * 82, by = y + 34 + Math.floor(i / 4) * 32;
+      button(bx, by, 78, 28, e.key, () => removeTest(team, i), { flat: true, size: 15 });
+    });
+    buttons.push({ x, y, w, h, fn: () => (testLab.active = idx) });
+  }
+  function drawTestLab() {
+    if (menuGame) JQ.render(menuGame, menuView);
+    veil(0.93);
+    title('测试场', 46, 44, '#f5ead0');
+    text(g, '点下方英雄/小兵加入当前队；点队伍里的卡移除；每队最多 8 个', C.W / 2, 84, 13, '#d8c8a0', { font: 'sans-serif', bold: false });
+    drawTestTeam(0, 12, 98, 340, 142);
+    drawTestTeam(1, 368, 98, 340, 142);
+    const tabY = 252;
+    button(30, tabY, 100, 36, '英雄', () => ((testLab.tab = 'hero'), (testLab.page = 0)), { flat: true, on: testLab.tab === 'hero', size: 17 });
+    button(140, tabY, 100, 36, '小兵', () => ((testLab.tab = 'unit'), (testLab.page = 0)), { flat: true, on: testLab.tab === 'unit', size: 17 });
+    button(250, tabY, 100, 36, '随机', () => randomTestTeam(), { flat: true, size: 17 });
+    button(360, tabY, 100, 36, '清空', () => clearTestTeam(), { flat: true, size: 17 });
+    button(470, tabY, 210, 36, testLab.active ? '当前：红方' : '当前：蓝方', () => (testLab.active = 1 - testLab.active), { flat: true, on: true, size: 17 });
+    const list = testLab.tab === 'hero' ? Object.keys(HEROES) : JQ.ALL_UNITS;
+    const per = 35, pages = Math.max(1, Math.ceil(list.length / per));
+    testLab.page = Math.min(testLab.page, pages - 1);
+    for (let i = 0; i < per; i++) {
+      const key = list[testLab.page * per + i];
+      if (!key) break;
+      const col = i % 7, row = Math.floor(i / 7);
+      button(8 + col * 100, 298 + row * 56, 94, 50, key, () => addTest(testLab.tab === 'hero' ? 'hero' : 'unit', key), { flat: true, on: testHas(key), size: 18 });
+    }
+    button(30, 590, 100, 34, '上一页', () => (testLab.page = Math.max(0, testLab.page - 1)), { flat: true, disabled: testLab.page === 0, size: 15 });
+    text(g, `第 ${testLab.page + 1}/${pages} 页`, C.W / 2, 607, 13, '#bfb39a', { font: 'sans-serif', bold: false });
+    button(590, 590, 100, 34, '下一页', () => (testLab.page = Math.min(pages - 1, testLab.page + 1)), { flat: true, disabled: testLab.page === pages - 1, size: 15 });
+    button(30, 634, 170, 36, `英雄 Lv${testLab.heroLv}`, () => cycleTestLevel('hero'), { flat: true, size: 15 });
+    button(210, 634, 170, 36, `小兵 Lv${testLab.unitLv}`, () => cycleTestLevel('unit'), { flat: true, size: 15 });
+    text(g, '等级统一作用于整队，点击切换', 400, 652, 12, '#bfb39a', { align: 'left', font: 'sans-serif', bold: false });
+    button(180, 692, 360, 64, '开始测试', startTest, { on: true, size: 28 });
+    button(210, 770, 300, 50, '返回主页', () => (screen = 'menu'), { size: 20 });
+    if (testLab.msg) text(g, testLab.msg, C.W / 2, 850, 15, '#ff8060', { font: 'sans-serif', bold: false });
+  }
+  function drawTestTop() {
+    const names = (team) => team.map((e) => e.key).join('、');
+    g.save();
+    g.fillStyle = 'rgba(18,12,6,0.94)';
+    g.fillRect(0, 0, C.W, 52);
+    g.fillRect(0, 1120, C.W, 160);
+    g.restore();
+    text(g, '测试场', 18, 26, 18, '#ffd23f', { align: 'left' });
+    text(g, `蓝方 ${testAlive(0).length} vs 红方 ${testAlive(1).length}`, C.W / 2, 26, 19, '#ffe9a0', { stroke: '#1a1008', strokeW: 4 });
+    text(g, `${testLab.game ? testLab.game.time.toFixed(1) : 0}s · 2x`, C.W - 18, 26, 14, '#d8c8a0', { align: 'right', font: 'sans-serif', bold: false });
+    text(g, `蓝：${names(testLab.blue)}`, 18, 1150, 12, '#8cc8ff', { align: 'left', font: 'sans-serif', bold: false });
+    text(g, `红：${names(testLab.red)}`, 18, 1172, 12, '#ff9a8a', { align: 'left', font: 'sans-serif', bold: false });
+    text(g, '自动战斗中', C.W / 2, 1210, 15, '#d8c8a0', { font: 'sans-serif', bold: false });
+  }
+  function drawTestOver() {
+    veil(0.84);
+    const r = testLab.result;
+    if (!r) return;
+    const win = r.winner === 0 ? '蓝方胜' : r.winner === 1 ? '红方胜' : '平局';
+    title(win, 300, 76, r.winner === 0 ? '#5ab0ff' : r.winner === 1 ? '#ff6a4a' : '#f5ead0');
+    text(g, `用时 ${r.time.toFixed(1)} 秒`, C.W / 2, 370, 20, '#f5ead0', { font: 'sans-serif', bold: false });
+    text(g, `蓝方存活 ${r.blue.alive} · 剩余血量 ${(r.blue.hp * 100).toFixed(0)}%`, C.W / 2, 430, 18, '#8cc8ff', { font: 'sans-serif', bold: false });
+    text(g, `红方存活 ${r.red.alive} · 剩余血量 ${(r.red.hp * 100).toFixed(0)}%`, C.W / 2, 462, 18, '#ff9a8a', { font: 'sans-serif', bold: false });
+    const b = testLab.blue.map((e) => e.key).join('、'), rd = testLab.red.map((e) => e.key).join('、');
+    text(g, `蓝：${b}`, C.W / 2, 520, 13, '#bfb39a', { font: 'sans-serif', bold: false });
+    text(g, `红：${rd}`, C.W / 2, 544, 13, '#bfb39a', { font: 'sans-serif', bold: false });
+    button(210, 610, 300, 70, '再测一次', startTest, { on: true, size: 28 });
+    button(210, 700, 300, 60, '修改阵容', () => (screen = 'testlab'), { size: 22 });
+    button(210, 780, 300, 54, '返回主页', () => (screen = 'menu'), { size: 20 });
+  }
+
   // 按逗号断行，每行不超过 n 字
   function wrap(str, n) {
     const out = [];
@@ -808,7 +1014,7 @@
   let helpBack = 'menu';
   function drawHelp() {
     veil(0.9);
-    panel(14, 104, 692, 440, 'rgba(18,12,6,0.58)', 'rgba(255,220,150,0.2)', 1.5);
+    panel(14, 104, 692, 460, 'rgba(18,12,6,0.58)', 'rgba(255,220,150,0.2)', 1.5);
     title('玩法说明', 70, 52, '#f5ead0');
     const lines = [
       '· 点「招兵」：备战席剩下的卡自动卖掉（几级卖几包），再整排刷新 5 张。',
@@ -824,6 +1030,7 @@
       '· 兵种：刀盾弓枪剑刺 + 各包骑/弩/陌/妖/魔/猴/僧/龙/鬼/甲',
       '· 模式：经典/天命都是 200 关闯关，越往后敌人越强；无限守波次。',
       '· 自定义卡包：自己选 16 位英雄（含夏夏）和 6~12 种小兵。',
+      '· 测试场：自定义双方英雄/小兵阵容，自动打一场看胜负。',
     ];
     lines.forEach((l, i) => text(g, l, 26, 120 + i * 32, 17, '#f5ead0', { align: 'left', bold: false }));
     text(g, '每个卡包 16 位英雄，各有被动特长、技能和大招', C.W / 2, 580, 19, '#ffd23f');
@@ -1121,6 +1328,24 @@
     else if (screen === 'stages') drawStages();
     else if (screen === 'custom') drawCustom();
     else if (screen === 'units') drawUnits();
+    else if (screen === 'testlab') drawTestLab();
+    else if (screen === 'testplay') {
+      if (testLab.game) {
+        testLab.acc += dt * 2;
+        let guard = 0;
+        while (testLab.acc >= STEP && guard++ < 30) {
+          testLab.game.step(STEP);
+          testLab.acc -= STEP;
+        }
+        JQ.render(testLab.game, testView);
+        drawTestTop();
+        if (testLab.game.over || !testAlive(0).length || !testAlive(1).length || testLab.game.time >= 30) finishTest();
+      }
+    }
+    else if (screen === 'testover') {
+      if (testLab.game) JQ.render(testLab.game, testView);
+      drawTestOver();
+    }
     else if (screen === 'talents') {
       if (menuGame) JQ.render(menuGame, menuView);
       drawTalents();
@@ -1180,5 +1405,5 @@
   }
 
   // 调试/测试用
-  window.__jq = { get game() { return game; }, get screen() { return screen; }, newGame, view, setScreen: (s) => (screen = s), setDblSell: (v) => (dblSell = v), openCustom, openStages, get stage() { return stageOf(); }, get best() { return bestOf(); }, get custom() { return { heroes: customHeroes.slice(), units: customUnits.slice() }; } };
+  window.__jq = { get game() { return game; }, get screen() { return screen; }, newGame, view, setScreen: (s) => (screen = s), setDblSell: (v) => (dblSell = v), openCustom, openStages, openTestLab, startTest, get test() { return { blue: testLab.blue.slice(), red: testLab.red.slice(), game: testLab.game, result: testLab.result }; }, get stage() { return stageOf(); }, get best() { return bestOf(); }, get custom() { return { heroes: customHeroes.slice(), units: customUnits.slice() }; } };
 })();

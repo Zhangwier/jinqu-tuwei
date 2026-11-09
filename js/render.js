@@ -1580,8 +1580,10 @@
     g.save();
     if (game.shake > 0) g.translate((Math.random() - 0.5) * game.shake, (Math.random() - 0.5) * game.shake);
     g.drawImage(bg, 0, 0);
-    drawBoard(game, 1, view);
-    drawBoard(game, 0, view);
+    if (!view.test) {
+      drawBoard(game, 1, view);
+      drawBoard(game, 0, view);
+    }
     for (const z of game.zones) drawZone(g, z, game.time);
     const ground = (f) => f.kind === 'crater' || f.kind === 'abyss' || f.kind === 'storm';
     for (const f of game.fx) if (ground(f)) drawFx(g, f, game);
@@ -1590,8 +1592,10 @@
     for (const p of game.projectiles) drawProjectile(g, p, game.time);
     for (const f of game.fx) if (!ground(f) && f.kind !== 'banner') drawFx(g, f, game);
     g.restore();
-    drawHud(game, view);
-    for (const f of game.fx) if (f.kind === 'banner') drawBanner(g, f);
+    if (!view.test) {
+      drawHud(game, view);
+      for (const f of game.fx) if (f.kind === 'banner') drawBanner(g, f);
+    }
     const now = performance.now();
     for (const an of view.anims) {
       if (an.kind !== 'back') continue;
