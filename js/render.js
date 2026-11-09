@@ -41,7 +41,7 @@
     coin: [175, 600, 164, 164], bun: [341, 600, 168, 141], lock: [511, 600, 170, 164], chest: [683, 600, 196, 158],
   };
   const uiImg = new Image();
-  uiImg.src = 'img/ui.webp?v=20261110c';
+  uiImg.src = 'img/ui.webp?v=20261110d';
   const uiOk = () => uiImg.complete && uiImg.naturalWidth > 0;
   JQ.uiOk = uiOk;
   // 整张贴（图标），按宽高缩放
@@ -83,7 +83,7 @@
     knot: [0, 498, 192, 285], bar: [194, 498, 282, 73], scroll_long: [478, 498, 273, 123], divider: [753, 498, 248, 44],
   };
   const ui2Img = new Image();
-  ui2Img.src = 'img/ui2.webp?v=20261110c';
+  ui2Img.src = 'img/ui2.webp?v=20261110d';
   JQ.ui2Draw = function (g, name, x, y, w, h) {
     if (!(ui2Img.complete && ui2Img.naturalWidth)) return false;
     const a = ATLAS2[name];
@@ -93,7 +93,7 @@
   // 特效图：4 列 × 3 行，每格 256×341
   const FXS = { rays: [0, 0], ring: [1, 0], slash: [2, 0], bolt: [3, 0], fire: [0, 1], water: [1, 1], lotus: [2, 1], circle: [3, 1], pillar: [0, 2], sparkle: [1, 2], dust: [2, 2], fog: [3, 2] };
   const fxImg = new Image();
-  fxImg.src = 'img/fx.webp?v=20261110c';
+  fxImg.src = 'img/fx.webp?v=20261110d';
   // 加载后把每格转成小尺寸透明图（亮度当透明度），之后按普通方式画：
   // 比每次用 'lighter' 叠加 1024 大图便宜得多，在手机上差别很明显
   const fxCells = {};
@@ -329,18 +329,26 @@
   }
 
   // ---------- 背景 ----------
+  // 画面样式（设置里可换）：unit = glyph 汉字（默认）/ piece 象棋子；bg = paper 宣纸（默认）/ field 水墨战场
+  const STYLE = { unit: 'glyph', bg: 'paper' };
+  JQ.setStyle = (o) => {
+    if (o.bg && o.bg !== STYLE.bg) bg = null;
+    Object.assign(STYLE, o);
+    if (STYLE.bg === 'field') loadField();
+    if (STYLE.unit === 'piece' && JQ.loadPieces) JQ.loadPieces();
+  };
   let bg = null;
   const BG_EXT = 260; // 背景上下各多画一截，长屏手机不留黑边
   // 战场底图（AI 生图）：加载完重建背景缓存；没加载时用程序生成的宣纸地面
   const fieldImg = new Image();
   fieldImg.onload = () => (bg = null);
-  fieldImg.src = 'img/field.jpg?v=20261110c';
+  const loadField = () => fieldImg.src || (fieldImg.src = 'img/field.jpg?v=20261110d');
   function makeBackground() {
     const c = document.createElement('canvas');
     c.width = C.W;
     c.height = C.H + 2 * BG_EXT;
     const g = c.getContext('2d');
-    if (fieldImg.complete && fieldImg.naturalWidth) {
+    if (STYLE.bg === 'field' && fieldImg.complete && fieldImg.naturalWidth) {
       // 按高度铺满（两侧裁掉一点），再压一层四周暗角
       const s = c.height / fieldImg.naturalHeight, w = fieldImg.naturalWidth * s;
       g.drawImage(fieldImg, (C.W - w) / 2, 0, w, c.height);
@@ -1011,7 +1019,7 @@
   // 棋子素材（AI 生图）：我方蓝边、敌方红边；小兵木质、英雄白玉金边。没加载时用代码画
   const pieceImg = new Image();
   pieceImg.onload = () => spriteCache.clear();
-  pieceImg.src = 'img/pieces.webp?v=20261110c';
+  JQ.loadPieces = () => pieceImg.src || (pieceImg.src = 'img/pieces.webp?v=20261110d');
   const PIECE_SRC = { u0: [0, 0, 96, 96], u1: [98, 0, 96, 96], h0: [196, 0, 128, 128], h1: [326, 0, 128, 128] };
   function pieceBase(side, hero, buffed) {
     const R = hero ? 31 : 17, S = R * 2 + 8;
@@ -1096,7 +1104,115 @@
     }
   }
 
+  // 默认样式：原版汉字单位
+  function drawUnitGlyph(g, u, game) {
+    if (u.isOutpost) return; // 哨所画在棋盘格上
+    const t = game.time;
+    const sid = u.side;
+    let ox = 0, oy = 0;
+    if (u.anim > 0 && u.target) {
+      const k = Math.sin((u.anim / 0.2) * Math.PI) * 6;
+      const dx = u.target.x - u.x, dy = u.target.y - u.y, d = Math.hypot(dx, dy) || 1;
+      ox = (dx / d) * k;
+      oy = (dy / d) * k;
+    }
+    const age = t - u.born;
+    // 兜底：时间回拨/异常 born 时也不能给 ellipse 传负半径
+    const pop = Math.max(0.05, age < 0.25 ? 0.2 + 0.8 * ease(age / 0.25) : 1);
+    const bob = Math.sin(t * 10 + u.id) * 1.5;
+    const x = u.x + ox, y = u.y + oy + bob - (u.lift || 0);
+    const baseA = u.clone ? 0.6 : u.stealthUntil > t ? 0.35 : 1;
+    if (baseA !== 1) {
+      g.save();
+      g.globalAlpha = baseA;
+    }
+    // 阵营底盘
+    g.fillStyle = alphaHex(TEAM[sid], 0.3);
+    g.beginPath();
+    g.ellipse(u.x, u.y + u.r * 0.8, u.r * pop, u.r * 0.36 * pop, 0, 0, TAU);
+    g.fill();
+    if (u.level >= 2) {
+      g.strokeStyle = JQ.LEVEL_COLORS[Math.min(u.level, C.MAX_LEVEL)];
+      g.lineWidth = 1 + u.level * 0.5;
+      g.stroke();
+    }
+    if (u.isHero) {
+      const aura = HEROES[u.key].aura;
+      drawAura(g, aura, x, y, 50);
+      g.strokeStyle = alphaHex(aura, 0.85);
+      g.lineWidth = 2;
+      for (let i = 0; i < 3; i++) {
+        g.beginPath();
+        g.arc(x, y + 4, 34, t * 2 + (i * TAU) / 3, t * 2 + (i * TAU) / 3 + 1.1);
+        g.stroke();
+      }
+      if (u.shield > 0) {
+        g.strokeStyle = 'rgba(255,230,120,0.85)';
+        g.lineWidth = 3;
+        g.beginPath();
+        g.arc(x, y, 30, 0, TAU);
+        g.stroke();
+      }
+      if (u.invulnUntil > t) {
+        g.fillStyle = 'rgba(255,255,255,0.25)';
+        g.beginPath();
+        g.arc(x, y, 30, 0, TAU);
+        g.fill();
+      }
+      // 贴图自带缩放，不用 save/translate/scale/restore
+      drawGlyph(g, u.key, x, y, 38, INK[sid], sid === 0 ? 'rgba(255,255,255,0.85)' : 'rgba(255,225,215,0.85)', 6, pop);
+      if (u.flash > 0) {
+        g.globalAlpha = baseA * (u.flash / 0.12);
+        drawGlyph(g, u.key, x, y, 38, '#fff', null, 0, pop);
+        g.globalAlpha = baseA;
+      }
+      const w = 62, hp = Math.max(0, u.hp / u.maxHp);
+      g.fillStyle = '#1a1a1a';
+      rr(g, x - w / 2 - 1, y - 39, w + 2, 9, 3);
+      if (u.star) drawGlyph(g, '魂' + u.star, x - w / 2 - 14, y - 34, 10, '#9fd8ff', '#0a1a2a', 2.5);
+      g.fill();
+      g.fillStyle = sid === 0 ? '#3fdf5f' : '#f04030';
+      if (hp > 0) {
+        rr(g, x - w / 2, y - 38, Math.max(4, w * hp), 7, 3);
+        g.fill();
+      }
+      if (u.shield > 0) {
+        g.fillStyle = '#ffe680';
+        g.fillRect(x - w / 2, y - 38, Math.min(w, (w * u.shield) / u.maxHp), 2.5);
+      }
+      drawGlyph(g, '★'.repeat(Math.min(u.level, C.MAX_LEVEL)), x, y - 47, 11, '#ffd34d', '#5a3a00', 2.5);
+      if (u.level >= game.R.ultLevel && u.ultT <= 0.5) drawGlyph(g, '大', x + w / 2 + 9, y - 34, 14, '#fff', '#d02010', 5);
+    } else {
+      const buffed = u.atkBuffUntil > t;
+      drawGlyph(g, u.key, x, y, 30, INK[sid], buffed ? 'rgba(255,200,80,0.95)' : sid === 0 ? 'rgba(220,235,255,0.75)' : 'rgba(255,215,205,0.75)', 4, pop);
+      if (u.flash > 0) {
+        g.globalAlpha = baseA * (u.flash / 0.12) * 0.9;
+        drawGlyph(g, u.key, x, y, 30, '#fff', null, 0, pop);
+        g.globalAlpha = baseA;
+      }
+      if (u.hp < u.maxHp) {
+        const w = 24, hp = Math.max(0, u.hp / u.maxHp);
+        g.fillStyle = '#222';
+        g.fillRect(x - w / 2, y - 22, w, 4);
+        g.fillStyle = sid === 0 ? '#3fdf5f' : '#f04030';
+        g.fillRect(x - w / 2, y - 22, w * hp, 4);
+      }
+      if (u.level > 1) drawGlyph(g, '★'.repeat(Math.min(4, u.level - 1)), x, y + 19, 9, JQ.LEVEL_COLORS[Math.min(u.level, C.MAX_LEVEL)]);
+    }
+    if (u.stun > 0) {
+      const charm = u.charmUntil > t;
+      for (let i = 0; i < 3; i++) {
+        const a = t * 5 + (i * TAU) / 3;
+        drawGlyph(g, charm ? '♥' : '✦', x + Math.cos(a) * 12, y - u.r - 8 + Math.sin(a) * 4, 11, charm ? '#ff5fa8' : '#ffe040');
+      }
+    }
+    if (baseA !== 1) g.restore();
+  }
+
+
+  // 可选样式：象棋子（设置里切换）
   function drawUnit(g, u, game) {
+    if (STYLE.unit !== 'piece') return drawUnitGlyph(g, u, game);
     if (u.isOutpost) return; // 哨所画在棋盘格上
     const t = game.time;
     const sid = u.side;
@@ -1474,7 +1590,7 @@
       }
       case 'ink': {
         // 先画棋子翻倒（前 60%），再是墨点
-        if (k < 0.6 && f.side != null) {
+        if (STYLE.unit === 'piece' && k < 0.6 && f.side != null) {
           const kk = k / 0.6;
           const b = pieceBase(f.side, !!f.big, false);
           const fx2 = Math.max(0.05, Math.abs(Math.cos(kk * Math.PI * 1.5)));

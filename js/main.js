@@ -260,6 +260,9 @@
   if (/[?&]screen=units/.test(location.search)) screen = 'units'; // 调试：直接打开小兵图鉴
   if (/[?&]screen=bonds/.test(location.search)) (helpPage = 1), (helpPack = 'bonds'), (screen = 'help'); // 调试：直接打开羁绊一览
   let dblSell = localStorage.getItem('jq_dblsell') === '1'; // 设置：双击卡牌直接卖掉
+  // 画面样式：默认原版（汉字单位 + 宣纸地面），可在设置里换成象棋子 / 水墨战场
+  const style = { unit: localStorage.getItem('jq_unitstyle') === 'piece' ? 'piece' : 'glyph', bg: localStorage.getItem('jq_bgstyle') === 'field' ? 'field' : 'paper' };
+  JQ.setStyle(style);
   let skillToast = localStorage.getItem('jq_skilltoast') !== '0'; // 设置：英雄放技能时的弹字/大招横幅
   let lastTap = null;
   // 战绩按模式记：{ classic: {win, lose}, survival: {best} ... }
@@ -882,7 +885,7 @@
   const PACK_FOCUS = { sanguo: 0.55, xiyou: 0.62, song: 0.55 }; // 竖图裁成横幅时取景的高度位置（0 顶 ~ 1 底），默认 0.4
   for (const k of ['sanguo', 'xiyou', 'tang', 'song', 'custom']) {
     const im = new Image();
-    im.src = `img/pack_${k}.jpg?v=20261110c`;
+    im.src = `img/pack_${k}.jpg?v=20261110d`;
     PACK_ART[k] = im;
   }
   function choosePack(k) {
@@ -1155,7 +1158,7 @@
     iconBtn(x + w - 50, y - 14, 50, '×', () => (menuPop = null));
   }
   function drawSettingsPop() {
-    const x = 110, y = 380, w = 500, h = 440;
+    const x = 110, y = 300, w = 500, h = 610;
     popBase(x, y, w, h, '设 置');
     const row = (i, label, on, fn) => {
       const ry = y + 90 + i * 84;
@@ -1181,6 +1184,17 @@
       musicOn = !musicOn;
       localStorage.setItem('jq_music', musicOn ? '1' : '0');
       setMusic();
+    });
+    // 两项画面样式：开 = 新样式，关 = 原版（默认）
+    row(4, '水墨战场背景', style.bg === 'field', () => {
+      style.bg = style.bg === 'field' ? 'paper' : 'field';
+      localStorage.setItem('jq_bgstyle', style.bg);
+      JQ.setStyle({ bg: style.bg });
+    });
+    row(5, '单位用象棋子', style.unit === 'piece', () => {
+      style.unit = style.unit === 'piece' ? 'glyph' : 'piece';
+      localStorage.setItem('jq_unitstyle', style.unit);
+      JQ.setStyle({ unit: style.unit });
     });
     row(1, '双击卖卡', dblSell, () => {
       dblSell = !dblSell;
