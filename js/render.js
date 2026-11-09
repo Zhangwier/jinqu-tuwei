@@ -41,7 +41,7 @@
     coin: [175, 600, 164, 164], bun: [341, 600, 168, 141], lock: [511, 600, 170, 164], chest: [683, 600, 196, 158],
   };
   const uiImg = new Image();
-  uiImg.src = 'img/ui.webp?v=20261110e';
+  uiImg.src = 'img/ui.webp?v=20261110f';
   const uiOk = () => uiImg.complete && uiImg.naturalWidth > 0;
   JQ.uiOk = uiOk;
   // 整张贴（图标），按宽高缩放
@@ -83,7 +83,7 @@
     knot: [0, 498, 192, 285], bar: [194, 498, 282, 73], scroll_long: [478, 498, 273, 123], divider: [753, 498, 248, 44],
   };
   const ui2Img = new Image();
-  ui2Img.src = 'img/ui2.webp?v=20261110e';
+  ui2Img.src = 'img/ui2.webp?v=20261110f';
   JQ.ui2Draw = function (g, name, x, y, w, h) {
     if (!(ui2Img.complete && ui2Img.naturalWidth)) return false;
     const a = ATLAS2[name];
@@ -93,7 +93,7 @@
   // 特效图：4 列 × 3 行，每格 256×341
   const FXS = { rays: [0, 0], ring: [1, 0], slash: [2, 0], bolt: [3, 0], fire: [0, 1], water: [1, 1], lotus: [2, 1], circle: [3, 1], pillar: [0, 2], sparkle: [1, 2], dust: [2, 2], fog: [3, 2] };
   const fxImg = new Image();
-  fxImg.src = 'img/fx.webp?v=20261110e';
+  fxImg.src = 'img/fx.webp?v=20261110f';
   // 加载后把每格转成小尺寸透明图（亮度当透明度），之后按普通方式画：
   // 比每次用 'lighter' 叠加 1024 大图便宜得多，在手机上差别很明显
   const fxCells = {};
@@ -347,7 +347,7 @@
     if (bgImgs[id]) return bgImgs[id];
     const im = new Image();
     im.onload = () => (bg = null);
-    im.src = `img/bg_${id}.jpg?v=20261110e`;
+    im.src = `img/bg_${id}.jpg?v=20261110f`;
     return (bgImgs[id] = im);
   }
   function makeBackground() {
@@ -1037,7 +1037,7 @@
   // 棋子素材（AI 生图）：我方蓝边、敌方红边；小兵木质、英雄白玉金边。没加载时用代码画
   const pieceImg = new Image();
   pieceImg.onload = () => spriteCache.clear();
-  JQ.loadPieces = () => pieceImg.src || (pieceImg.src = 'img/pieces.webp?v=20261110e');
+  JQ.loadPieces = () => pieceImg.src || (pieceImg.src = 'img/pieces.webp?v=20261110f');
   const PIECE_SRC = { u0: [0, 0, 96, 96], u1: [98, 0, 96, 96], h0: [196, 0, 128, 128], h1: [326, 0, 128, 128] };
   function pieceBase(side, hero, buffed) {
     const R = hero ? 31 : 17, S = R * 2 + 8;
@@ -1187,7 +1187,7 @@
       const w = 62, hp = Math.max(0, u.hp / u.maxHp);
       g.fillStyle = '#1a1a1a';
       rr(g, x - w / 2 - 1, y - 39, w + 2, 9, 3);
-      if (u.star) drawGlyph(g, '魂' + u.star, x - w / 2 - 14, y - 34, 10, '#9fd8ff', '#0a1a2a', 2.5);
+      if (u.main) drawGlyph(g, '本命' + u.main, x, y - 60, 11, '#fff3c0', '#8a2010', 3);
       g.fill();
       g.fillStyle = sid === 0 ? '#3fdf5f' : '#f04030';
       if (hp > 0) {
@@ -1293,7 +1293,7 @@
       const w = 62, hp = Math.max(0, u.hp / u.maxHp);
       g.fillStyle = '#1a1a1a';
       rr(g, x - w / 2 - 1, y - 39, w + 2, 9, 3);
-      if (u.star) drawGlyph(g, '魂' + u.star, x - w / 2 - 14, y - 34, 10, '#9fd8ff', '#0a1a2a', 2.5);
+      if (u.main) drawGlyph(g, '本命' + u.main, x, y - 60, 11, '#fff3c0', '#8a2010', 3);
       g.fill();
       g.fillStyle = sid === 0 ? '#3fdf5f' : '#f04030';
       if (hp > 0) {

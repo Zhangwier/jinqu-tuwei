@@ -307,51 +307,71 @@
     return out;
   }
 
-  // ---------- 养成：主公等级 + 将魂星级 + 关卡星级 ----------
-  // 强度控制：将魂每星只给该英雄 +2% 攻击/血量（最多 5 星 +10%），只作用于玩家方；
-  // 其余奖励是解锁感和收集感（等级、星星、宝箱给万能将魂）。敌方强度仍只由关卡决定。
+  // ---------- 养成：主公等级 + 本命将 + 关卡星级 ----------
+  // 只有一位“本命将”能用铜钱升级（每级攻击/血量 +3%），其他英雄保持原样；等级上限以后靠“突破”提高。
+  // 加成只给玩家方，敌人强度仍只由关卡决定。
   const PROG_KEY = 'jq_prog';
-  const SOUL_STEPS = [20, 60, 140, 260, 450]; // 累计将魂到这些值依次升 1~5 星
-  const PROG_DEF = () => ({ xp: 0, lv: 1, souls: {}, wild: 0, stars: { classic: {}, fate: {} }, chests: 0 });
+  const PROG_DEF = () => ({ v: 2, xp: 0, lv: 1, coins: 0, main: null, heroLv: {}, brk: {}, stars: { classic: {}, fate: {} }, chests: 0 });
   let prog = PROG_DEF();
   try {
-    prog = Object.assign(PROG_DEF(), JSON.parse(localStorage.getItem(PROG_KEY) || 'null') || {});
+    const old = JSON.parse(localStorage.getItem(PROG_KEY) || 'null') || {};
+    prog = Object.assign(PROG_DEF(), old);
+    // 旧版“将魂”存档：将魂和万能将魂折成铜钱，将魂最多的英雄当本命将
+    if (!old.v || old.v < 2) {
+      const souls = old.souls || {};
+      let best = null;
+      for (const [k, v] of Object.entries(souls)) if (HEROES[k] && (!best || v > souls[best])) best = k;
+      prog.coins += Object.values(souls).reduce((a, b) => a + b, 0) * 2 + (old.wild || 0) * 3;
+      prog.main = best;
+      delete prog.souls;
+      delete prog.wild;
+      prog.v = 2;
+    }
   } catch (e) {}
+  if (prog.main && !HEROES[prog.main]) prog.main = null;
   const saveProg = () => localStorage.setItem(PROG_KEY, JSON.stringify(prog));
-  const soulStar = (pts) => SOUL_STEPS.filter((v) => (pts || 0) >= v).length;
+  saveProg();
   const lvNeed = (lv) => 100 + 40 * (lv - 1);
-  function masteryMap() {
-    const m = {};
-    for (const [k, v] of Object.entries(prog.souls)) if (soulStar(v)) m[k] = soulStar(v);
-    return m;
+  const heroLvOf = (name) => prog.heroLv[name] || 1;
+  const heroCap = (name) => 20 + 10 * (prog.brk[name] || 0); // 突破一次上限 +10
+  const upCost = (lv) => 30 + 15 * (lv - 1);
+  const mainBonus = (lv) => 0.03 * (lv - 1);
+  const mainInfo = () => (prog.main ? { name: prog.main, lv: heroLvOf(prog.main) } : null);
+  function setMain(name) {
+    prog.main = name;
+    saveProg();
+  }
+  function upgradeMain() {
+    const name = prog.main;
+    if (!name) return false;
+    const lv = heroLvOf(name);
+    if (lv >= heroCap(name) || prog.coins < upCost(lv)) return false;
+    prog.coins -= upCost(lv);
+    prog.heroLv[name] = lv + 1;
+    saveProg();
+    return true;
   }
   function totalStars() {
     let n = 0;
     for (const md of Object.values(prog.stars)) for (const v of Object.values(md)) n += v;
     return n;
   }
-  // 给一个英雄加将魂，返回 { name, add, from, to }
-  function addSouls(name, add) {
-    const from = soulStar(prog.souls[name]);
-    prog.souls[name] = (prog.souls[name] || 0) + add;
-    return { name, add, from, to: soulStar(prog.souls[name]) };
-  }
-  // 一局结束：经验、将魂、关卡星级、星级宝箱
+  // 一局结束：主公经验、铜钱、关卡星级、星级宝箱
   function grantProgress(g, win) {
     const s = g.sides[0];
     const stage = g.stage || 1;
-    const out = { xp: 0, lvUps: 0, souls: [], stars: 0, newStars: 0, chest: 0 };
+    const out = { xp: 0, lvUps: 0, coins: 0, stars: 0, newStars: 0, chest: 0, mainUsed: !!(prog.main && s.stats.heroLv[prog.main]) };
     out.xp = win ? 60 + 2 * Math.min(100, stage) : 25 + Math.min(60, stage);
-    if (g.R.waves) out.xp = 20 + 8 * Math.max(0, g.wave - 1);
+    out.coins = win ? 40 + Math.min(110, stage) : 15 + Math.min(30, Math.floor(stage / 2));
+    if (g.R.waves) (out.xp = 20 + 8 * Math.max(0, g.wave - 1)), (out.coins = 10 + 5 * Math.max(0, g.wave - 1));
+    if (out.mainUsed) out.coins += 10; // 本命将上场多给一点
     prog.xp += out.xp;
     while (prog.xp >= lvNeed(prog.lv)) {
       prog.xp -= lvNeed(prog.lv);
       prog.lv++;
       out.lvUps++;
-      prog.wild += 20;
+      out.coins += 100;
     }
-    for (const [name, lv] of Object.entries(s.stats.heroLv)) out.souls.push(addSouls(name, (win ? 12 : 6) + 4 * lv));
-    out.souls.sort((a, b) => b.to - b.from - (a.to - a.from) || b.add - a.add);
     if (win && (g.modeKey === 'classic' || g.modeKey === 'fate')) {
       const f = s.hp / s.maxHp;
       out.stars = f >= 0.7 ? 3 : f >= 0.4 ? 2 : 1;
@@ -359,8 +379,9 @@
       out.newStars = Math.max(0, out.stars - (md[stage] || 0));
       md[stage] = Math.max(md[stage] || 0, out.stars);
     }
-    // 每攒 10 颗关卡星开一个宝箱：30 万能将魂
-    while (Math.floor(totalStars() / 10) > prog.chests) (prog.chests++, (prog.wild += 30), out.chest++);
+    // 每攒 10 颗关卡星开一个宝箱：150 铜钱
+    while (Math.floor(totalStars() / 10) > prog.chests) (prog.chests++, (out.coins += 150), out.chest++);
+    prog.coins += out.coins;
     saveProg();
     return out;
   }
@@ -389,7 +410,7 @@
     const staged = mode === 'classic' || mode === 'fate';
     const stage = staged ? stageOf() : 1;
     const enemyBoost = staged ? JQ.stageBoost(stage) : 1;
-    game = new JQ.Game({ seed: seedV, difficulty, mode, pack, talents, enemyBoost, stage, skillToast, aiProfile: JQ.aiProfile(difficulty, player), mastery: masteryMap() });
+    game = new JQ.Game({ seed: seedV, difficulty, mode, pack, talents, enemyBoost, stage, skillToast, aiProfile: JQ.aiProfile(difficulty, player), mainHero: prog.main ? { name: prog.main, lv: heroLvOf(prog.main) } : null });
     window.__jqGame = game; // 调试/性能测试用
     actions = 0;
     lastReward = null;
@@ -886,7 +907,7 @@
   const PACK_FOCUS = { sanguo: 0.55, xiyou: 0.62, song: 0.55 }; // 竖图裁成横幅时取景的高度位置（0 顶 ~ 1 底），默认 0.4
   for (const k of ['sanguo', 'xiyou', 'tang', 'song', 'custom']) {
     const im = new Image();
-    im.src = `img/pack_${k}.jpg?v=20261110e`;
+    im.src = `img/pack_${k}.jpg?v=20261110f`;
     PACK_ART[k] = im;
   }
   function choosePack(k) {
@@ -917,7 +938,7 @@
     text(g, label, 0, 2, size * 0.5, '#ffe9a0');
     g.restore();
   }
-  const NAV_ICON = { 将: 'ic_hero', 兵: 'ic_unit', 运: 'ic_talent', 编: 'ic_custom', 试: 'ic_test' };
+  const NAV_ICON = { 将: 'ic_hero', 兵: 'ic_unit', 运: 'ic_talent', 编: 'ic_custom', 试: 'ic_test' }; // 「本」没有图标：画朱红印章
   // 底栏图标：图标素材（没加载时画朱红汉字印章）+ 下方说明
   function navItem(x, y, w, h, glyph, label, fn) {
     buttons.push({ x, y, w, h, fn });
@@ -925,7 +946,7 @@
     g.save();
     g.translate(x + w / 2, y + h / 2);
     g.scale(k, k);
-    if (JQ.uiDraw(g, NAV_ICON[glyph], -31, -h / 2 + 6, 62, 62)) {
+    if (NAV_ICON[glyph] && JQ.uiDraw(g, NAV_ICON[glyph], -31, -h / 2 + 6, 62, 62)) {
       text(g, label, 0, h / 2 - 18, 16, '#e8dcc0', { font: 'sans-serif', bold: false });
       return g.restore();
     }
@@ -1016,9 +1037,9 @@
       g.fill();
       g.restore();
       const sOk = JQ.ui2Draw(g, 'star_on', bx + 236, by - 6, 22, 21);
-      JQ.ui2Draw(g, 'soul', bx + 302, by - 8, 14, 25);
+      JQ.uiDraw(g, 'coin', bx + 300, by - 6, 20, 20);
       text(g, (sOk ? '' : '★ ') + `${totalStars()}`, bx + 260, by + 6, 15, '#ffd23f', { align: 'left', font: 'sans-serif', stroke: '#2a1a08', strokeW: 3 });
-      text(g, (sOk ? '' : '魂 ') + `${prog.wild}`, bx + 320, by + 6, 15, '#9fd8ff', { align: 'left', font: 'sans-serif', stroke: '#2a1a08', strokeW: 3 });
+      text(g, (sOk ? '' : '铜 ') + `${prog.coins}`, bx + 322, by + 6, 15, '#ffd23f', { align: 'left', font: 'sans-serif', stroke: '#2a1a08', strokeW: 3 });
       text(g, `下个宝箱 ${10 - (totalStars() % 10)} 星`, bx + 250, by + 25, 11, '#d8c8a0', { align: 'left', font: 'sans-serif', bold: false });
     }
     title('禁区突围', 110, 92, '#1a1a1a');
@@ -1125,13 +1146,14 @@
     g.fillRect(-padX, ny, C.W + 2 * padX, 1.5);
     g.restore();
     const nav = [
+      ['本', '本命将', () => openMainHero()],
       ['将', '英雄图鉴', () => ((helpBack = 'menu'), (helpPage = 1), (screen = 'help'))],
       ['兵', '小兵图鉴', () => (screen = 'units')],
       ['运', '天赋', () => ((mode = 'fate'), localStorage.setItem('jq_mode', 'fate'), (screen = 'talents'))],
       ['编', '自定义', () => openCustom()],
       ['试', '测试场', () => openTestLab()],
     ];
-    nav.forEach(([gl, label, fn], i) => navItem(i * 144, ny, 144, nh, gl, label, fn));
+    nav.forEach(([gl, label, fn], i) => navItem(i * 120, ny, 120, nh, gl, label, fn));
 
     if (menuPop === 'settings') drawSettingsPop();
     else if (menuPop === 'packs') drawPacksPop();
@@ -1652,10 +1674,8 @@
       text(g, h.role, x + 90, y + 13, 12, '#e8dcc0', { font: 'sans-serif', bold: false });
       const bl = (JQ.BOND_BY_HERO[name] || []).filter((b) => helpPack === 'custom' || JQ.packBonds(helpPack).includes(b));
       if (bl.length) text(g, '羁绊·' + bl.slice(0, 2).map((b) => b.name).join('/'), x + 266, y + 13, 11, '#e6b04a', { align: 'right', font: 'sans-serif', bold: false });
-      // 将魂星级
-      const st = soulStar(prog.souls[name]);
-      text(g, '★'.repeat(st) + '☆'.repeat(5 - st), x + 330, y + 13, 11, st ? '#ffd23f' : '#6a6050', { align: 'right', font: 'sans-serif' });
-      if (prog.wild >= 10 && st < 5) button(x + 276, y + 92, 54, 26, '注魂', () => (addSouls(name, 10), (prog.wild -= 10), saveProg()), { flat: true, size: 13 });
+      // 本命将标记
+      if (name === prog.main) text(g, `本命 Lv${heroLvOf(name)}`, x + 330, y + 13, 11, '#ffd23f', { align: 'right', font: 'sans-serif', stroke: '#3a2008', strokeW: 2 });
       // 说明可能较长：按列宽自动缩字号，别顶出右边界
       const fit = (s, yy, size, color, opts) => {
         let z = size;
@@ -2027,14 +2047,15 @@
       g.fill();
       g.restore();
       text(g, `+${pg.xp} 经验` + (pg.lvUps ? `  升级！` : ''), px + 474, y + 20, 14, pg.lvUps ? '#ffd23f' : '#d8c8a0', { align: 'left', font: 'sans-serif' });
-      const sl = pg.souls.slice(0, 3).map((x) => `${x.name} +${x.add}` + (x.to > x.from ? `（${x.to}★）` : ''));
-      JQ.ui2Draw(g, 'soul', px + 48, y + 38, 18, 31);
-      text(g, sl.length ? '将魂  ' + sl.join('   ') : '将魂  本局没有英雄出场', px + 72, y + 54, 14, '#f0e4c8', { align: 'left', font: 'sans-serif', bold: false });
-      const up = pg.souls.find((x) => x.to > x.from);
+      JQ.uiDraw(g, 'coin', px + 46, y + 40, 24, 24);
+      text(g, `铜钱 +${roll(pg.coins)}   共 ${prog.coins}`, px + 78, y + 54, 15, '#ffd23f', { align: 'left', font: 'sans-serif' });
       const extra = [];
-      if (up && k > 1.4) extra.push(`★ ${up.name} 升到 ${up.to} 星：攻击/血量 +${up.to * 2}%`);
-      if (pg.chest) extra.push(`星级宝箱 ×${pg.chest}：万能将魂 +${30 * pg.chest}`);
-      if (pg.lvUps) extra.push(`升级奖励：万能将魂 +${20 * pg.lvUps}`);
+      if (prog.main) {
+        const lv = heroLvOf(prog.main), cost = upCost(lv), can = lv < heroCap(prog.main) && prog.coins >= cost;
+        extra.push(`本命将 ${prog.main} Lv${lv}` + (pg.mainUsed ? ' · 本局出战 +10 铜钱' : ' · 本局没上场') + (can ? ' · 可以升级了！' : ''));
+      } else extra.push('还没有本命将：主菜单底栏「本命将」里挑一位');
+      if (pg.chest) extra.push(`星级宝箱 ×${pg.chest}：铜钱 +${150 * pg.chest}`);
+      if (pg.lvUps) extra.push(`主公升级奖励：铜钱 +${100 * pg.lvUps}`);
       if (rw && rw.coins) extra.push(`金币 +${rw.coins}${rw.shop ? ' · 商店已刷新' : ''}`);
       extra.slice(0, 2).forEach((l, i) => {
         if (l.startsWith('星级宝箱')) JQ.ui2Draw(g, 'chest_open', px + 44, y + 70 + i * 26, 28, 28);
@@ -2082,6 +2103,83 @@
     return '小兵到 5 级每次召 4 个，是个关键门槛';
   }
 
+  // ---------- 本命将页 ----------
+  let mainTab = null, mainFxAt = 0;
+  function openMainHero() {
+    const p = prog.main ? HEROES[prog.main].pack : pack;
+    mainTab = JQ.PACKS[p] && JQ.PACKS[p].open ? p : 'sanguo';
+    screen = 'mainhero';
+  }
+  function drawMainHero() {
+    if (menuGame) JQ.render(menuGame, menuView);
+    pageFrame('本命将');
+    const now = performance.now();
+    // 铜钱
+    JQ.uiDraw(g, 'coin', 536, 92, 30, 30);
+    text(g, String(prog.coins), 572, 108, 22, '#ffd23f', { align: 'left', font: 'sans-serif', stroke: '#2a1a08', strokeW: 3 });
+    const name = prog.main;
+    if (!name) {
+      text(g, '还没有本命将', C.W / 2, 220, 30, '#ffe9a0', { stroke: '#2a1a08', strokeW: 4 });
+      text(g, '在下面挑一位你最喜欢的英雄。只有本命将能用铜钱升级，', C.W / 2, 270, 15, '#d8c8a0', { font: 'sans-serif', bold: false });
+      text(g, '出战时攻击和血量随等级提高，开局也更容易刷到他的字。', C.W / 2, 294, 15, '#d8c8a0', { font: 'sans-serif', bold: false });
+    } else {
+      const h = HEROES[name], lv = heroLvOf(name), cap = heroCap(name);
+      // 大卡面
+      const fxk = Math.min(1, (now - mainFxAt) / 700);
+      const sc = fxk < 1 ? 1 + 0.08 * Math.sin(fxk * Math.PI) : 1;
+      g.save();
+      g.translate(140, 270);
+      g.scale(sc, sc);
+      if (!JQ.ui9(g, 'card', -100, -110, 200, 220, 34, 28)) panel(-100, -110, 200, 220, '#f3ead3', '#6a4a20', 3);
+      text(g, h.chars[0], 0, -42, 76, '#2a1a08');
+      text(g, h.chars[1], 0, 46, 76, '#2a1a08');
+      g.restore();
+      if (fxk < 1) {
+        JQ.fxSprite(g, 'sparkle', 140, 250, 260, 346, (1 - fxk) * 1.3, fxk * 2);
+        g.save();
+        g.globalAlpha = 1 - fxk;
+        text(g, '+3%', 140, 140 - fxk * 40, 30, '#ffd23f', { stroke: '#3a2008', strokeW: 5 });
+        g.restore();
+      }
+      text(g, name, 270, 172, 38, '#ffe9a0', { align: 'left', stroke: '#2a1a08', strokeW: 5 });
+      text(g, `${JQ.PACKS[h.pack] ? JQ.PACKS[h.pack].name : ''} · ${h.role}`, 272, 210, 15, '#bfa878', { align: 'left', font: 'sans-serif', bold: false });
+      text(g, `Lv ${lv}`, 270, 252, 30, '#fff3d6', { align: 'left', stroke: '#2a1a08', strokeW: 4 });
+      text(g, `/ ${cap}`, 360, 256, 16, '#bfa878', { align: 'left', font: 'sans-serif', bold: false });
+      g.save();
+      JQ.rr(g, 270, 274, 400, 10, 5);
+      g.fillStyle = 'rgba(255,255,255,0.12)';
+      g.fill();
+      JQ.rr(g, 270, 274, Math.max(6, (400 * lv) / cap), 10, 5);
+      g.fillStyle = '#e6b04a';
+      g.fill();
+      g.restore();
+      const cur = Math.round(mainBonus(lv) * 100), nxt = Math.round(mainBonus(lv + 1) * 100);
+      text(g, `攻击 / 血量  +${cur}%` + (lv < cap ? `  →  +${nxt}%` : ''), 270, 312, 18, '#f0e4c8', { align: 'left', font: 'sans-serif' });
+      text(g, '加成只在出战时对本命将生效', 270, 338, 13, '#9a8f7a', { align: 'left', font: 'sans-serif', bold: false });
+      const full = lv >= cap, cost = upCost(lv), can = !full && prog.coins >= cost;
+      button(270, 360, 400, 70, full ? '已达上限 · 突破活动即将开放' : `升 级   铜钱 ${cost}`, () => {
+        if (upgradeMain()) (mainFxAt = performance.now()), sfx('merge'), buzz(18);
+        else sfx('bad');
+      }, { on: can, disabled: full, size: full ? 20 : 26 });
+      if (!full && !can) text(g, `还差 ${cost - prog.coins} 铜钱 · 每局都能拿`, 470, 448, 13, '#e8a060', { font: 'sans-serif', bold: false });
+      text(g, `被动【${h.passive.name}】${h.passive.desc}`, 50, 476, 13, '#d9c79a', { align: 'left', font: 'sans-serif', bold: false });
+      text(g, `大招【${h.ult.name}】${h.ult.desc}`, 50, 500, 13, '#e8a060', { align: 'left', font: 'sans-serif', bold: false });
+    }
+    // 选将：卡包页签 + 英雄格子
+    text(g, '点选更换本命将（每位的等级都会保留）', C.W / 2, 540, 15, '#ffd23f', { font: 'sans-serif' });
+    const tabs = ['sanguo', 'xiyou', 'tang', 'song', 'custom'];
+    tabs.forEach((k, i) => button(40 + i * 130, 556, 120, 42, k === 'custom' ? '自定义' : JQ.PACKS[k].name, () => (mainTab = k), { on: mainTab === k, size: 18 }));
+    const list = (JQ.PACKS[mainTab] && JQ.PACKS[mainTab].heroes) || [];
+    list.forEach((n, i) => {
+      const x = 40 + (i % 4) * 162, y = 614 + Math.floor(i / 4) * 66, on = n === prog.main;
+      button(x, y, 150, 56, n, () => (setMain(n), (mainFxAt = performance.now()), sfx('tap')), { flat: true, on, size: 20 });
+      const lv = heroLvOf(n);
+      if (lv > 1) text(g, 'Lv' + lv, x + 146, y + 12, 11, on ? '#3a2008' : '#ffd23f', { align: 'right', font: 'sans-serif' });
+    });
+    text(g, '本命将要在出战卡包里才会上场；开局刷字时更容易刷到他的字', C.W / 2, 890, 13, '#9a8f7a', { font: 'sans-serif', bold: false });
+    button(210, 1150, 300, 64, '返 回', () => (screen = 'menu'), { size: 26 });
+  }
+
   // ---------- 主循环 ----------
   let last = performance.now(), acc = 0;
   // 自适应画质：连续 1.5 秒低于约 50 帧就降一档内部分辨率，最低到 1.05 倍；新一局恢复。
@@ -2099,6 +2197,7 @@
     else if (screen === 'stages') drawStages();
     else if (screen === 'custom') drawCustom();
     else if (screen === 'units') drawUnits();
+    else if (screen === 'mainhero') drawMainHero();
     else if (screen === 'testlab') drawTestLab();
     else if (screen === 'testplay') {
       if (testLab.game) {
@@ -2176,6 +2275,7 @@
   if (urlScreen === 'custom') openCustom();
   else if (urlScreen === 'stages') openStages();
   else if (urlScreen === 'testlab') openTestLab();
+  else if (urlScreen === 'mainhero') openMainHero();
   else if (urlScreen === 'paused') newGame(), (screen = 'paused');
   if (AUTO) {
     newGame();

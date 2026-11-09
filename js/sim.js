@@ -131,7 +131,7 @@
       this.R = Object.assign(JQ.defaultRules(), this.mode.rules);
       this.stage = Math.max(1, Math.min(C.MAX_STAGE, opts.stage || 1));
       this.skillToast = opts.skillToast !== false;
-      this.mastery = opts.mastery || {}; // 玩家英雄将魂星级：每星攻击/血量 +2%，最多 5 星
+      this.mainHero = opts.mainHero || null; // 玩家本命将 { name, lv }：每级攻击/血量 +3%，只给玩家方
       // 卡包：玩家自选，对手默认随机一个已开放的；自定义包没配好不能进
       const usable = (p) => !!(JQ.PACKS[p] && JQ.PACKS[p].open && (p !== 'custom' || JQ.customReady()));
       const open = JQ.OPEN_PACKS.filter(usable);
@@ -160,6 +160,13 @@
         for (const s of this.sides) {
           const names = JQ.PACKS[s.pack].heroes.slice();
           const pickName = () => {
+            // 天命开局：玩家的本命将在卡包里就先送他
+            const mh = this.mainHero;
+            if (s.id === 0 && mh && names.includes(mh.name)) {
+              names.splice(names.indexOf(mh.name), 1);
+              if (mh.name === '夏夏') s.xiaGiven = 2;
+              return mh.name;
+            }
             // 自定义包带夏夏时，玩家开局送的英雄固定为夏夏
             if (s.id === 0 && JQ.heroInPack('夏夏', s.pack) && names.includes('夏夏')) {
               names.splice(names.indexOf('夏夏'), 1);
@@ -298,6 +305,11 @@
       if (p.kind === 'char' && JQ.heroInPack('夏夏', s.pack) && s.xiaGiven < 2 && !s.heroAlive['夏夏'] && this.charCount(s, '夏') < 2) {
         s.xiaGiven++;
         return JQ.makeCard('char', '夏', 1);
+      }
+      const mh = sid === 0 && this.mainHero;
+      if (p.kind === 'char' && mh && JQ.heroInPack(mh.name, s.pack) && !s.board.links.some((l) => l.hero === mh.name) && this.rand() < 0.12) {
+        const need = HEROES[mh.name].chars.filter((ch, i, a) => this.charCount(s, ch) < a.filter((x) => x === ch).length);
+        if (need.length && !this.charBlocked(s, need[0])) return JQ.makeCard('char', need[Math.floor(this.rand() * need.length)], 1);
       }
       if (p.kind === 'char' && allowPity !== false && this.rand() < Math.min(0.8, C.PARTNER_PITY + (s.T.charPity || 0))) {
         const want = this.wantedChars(sid);
@@ -762,8 +774,14 @@
         skillT: d.skill.cd * 0.5, ultT: d.ult.cd * 0.4, incomeT: 0, shieldT: 0,
       };
       if (P.stealth) u.stealthUntil = this.time + P.stealth;
-      const star = s.id === 0 ? Math.min(5, this.mastery[name] || 0) : 0;
-      if (star) (u.hp *= 1 + 0.02 * star), (u.maxHp *= 1 + 0.02 * star), (u.atk *= 1 + 0.02 * star), (u.star = star);
+      const mh = this.mainHero;
+      if (s.id === 0 && mh && mh.name === name && !(extra && extra.clone)) {
+        const k = 1 + 0.03 * (Math.max(1, mh.lv) - 1);
+        u.hp *= k;
+        u.maxHp *= k;
+        u.atk *= k;
+        u.main = mh.lv;
+      }
       Object.assign(u, extra || {});
       this.applyBond(s, u);
       this.units.push(u);
