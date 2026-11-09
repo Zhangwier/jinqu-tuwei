@@ -12,7 +12,7 @@ const DPR = +(process.argv[6] || 3);
 const WAIT = +(process.argv[7] || 2500);
 const EVAL = process.argv[8] || '';
 const THROTTLE = +(process.argv[9] || 1);
-const PORT = 9225;
+const PORT = +(process.env.CDP_PORT || 9225);
 const EDGE = 'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe';
 const profile = `${process.env.TEMP}\\jq-shot-${process.pid}`;
 

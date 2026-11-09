@@ -16,6 +16,18 @@
     info: { y: 1258 },
   };
   JQ.UI = UI;
+  // 长屏手机：逻辑区上下多出 padY，顶部 HUD 往上、底部招兵栏往下贴屏幕边（输入用同一组矩形，自动跟着走）
+  const UI0 = JSON.parse(JSON.stringify(UI));
+  const VIEW = { padX: 0, padY: 0, top: 0, bot: 0 };
+  JQ.VIEW = VIEW;
+  JQ.setViewPad = function (px, py) {
+    VIEW.padX = px;
+    VIEW.padY = py;
+    VIEW.top = Math.min(py, 200);
+    VIEW.bot = Math.min(py, 200);
+    for (const k of ['pause', 'speed']) UI[k].y = UI0[k].y - VIEW.top;
+    for (const k of ['shop', 'bun', 'recruit', 'info']) UI[k].y = UI0[k].y + VIEW.bot;
+  };
   JQ.shopRect = (i) => ({ x: UI.shop.x + i * (UI.shop.w + UI.shop.gap), y: UI.shop.y, w: UI.shop.w, h: UI.shop.h });
 
   const INK = ['#141414', '#7d1212'];
@@ -110,20 +122,22 @@
 
   // ---------- 背景 ----------
   let bg = null;
+  const BG_EXT = 260; // 背景上下各多画一截，长屏手机不留黑边
   function makeBackground() {
     const c = document.createElement('canvas');
     c.width = C.W;
-    c.height = C.H;
+    c.height = C.H + 2 * BG_EXT;
     const g = c.getContext('2d');
-    const base = g.createLinearGradient(0, 0, 0, C.H);
+    g.translate(0, BG_EXT);
+    const base = g.createLinearGradient(0, -BG_EXT, 0, C.H + BG_EXT);
     base.addColorStop(0, '#cfc3a2');
     base.addColorStop(0.5, '#dcd2b4');
     base.addColorStop(1, '#cbbf9d');
     g.fillStyle = base;
-    g.fillRect(0, 0, C.W, C.H);
+    g.fillRect(0, -BG_EXT, C.W, C.H + 2 * BG_EXT);
     const rnd = JQ.rng(7);
-    for (let i = 0; i < 300; i++) {
-      const x = rnd() * C.W, y = rnd() * C.H, r = 20 + rnd() * 90;
+    for (let i = 0; i < 380; i++) {
+      const x = rnd() * C.W, y = rnd() * (C.H + 2 * BG_EXT) - BG_EXT, r = 20 + rnd() * 90;
       const grd = g.createRadialGradient(x, y, 0, x, y, r);
       const a = 0.04 + rnd() * 0.05;
       grd.addColorStop(0, rnd() < 0.5 ? `rgba(110,90,60,${a})` : `rgba(255,250,235,${a})`);
@@ -131,9 +145,9 @@
       g.fillStyle = grd;
       g.fillRect(x - r, y - r, 2 * r, 2 * r);
     }
-    for (let i = 0; i < 4000; i++) {
+    for (let i = 0; i < 5600; i++) {
       g.fillStyle = rnd() < 0.5 ? 'rgba(80,60,30,0.07)' : 'rgba(255,255,255,0.08)';
-      g.fillRect(rnd() * C.W, rnd() * C.H, 1.5, 1.5);
+      g.fillRect(rnd() * C.W, rnd() * (C.H + 2 * BG_EXT) - BG_EXT, 1.5, 1.5);
     }
     g.strokeStyle = 'rgba(90,75,55,0.2)';
     g.lineWidth = 1.2;
@@ -170,18 +184,11 @@
     g.globalAlpha = 0.06;
     text(g, '禁', C.W / 2, 585, 340, '#3a2a10');
     g.restore();
-    const v = g.createRadialGradient(C.W / 2, C.H / 2, 300, C.W / 2, C.H / 2, 800);
+    const v = g.createRadialGradient(C.W / 2, C.H / 2, 300, C.W / 2, C.H / 2, 950);
     v.addColorStop(0, 'rgba(0,0,0,0)');
-    v.addColorStop(1, 'rgba(40,25,5,0.35)');
+    v.addColorStop(1, 'rgba(40,25,5,0.4)');
     g.fillStyle = v;
-    g.fillRect(0, 0, C.W, C.H);
-    // 底部操作区底板
-    const p = g.createLinearGradient(0, 1140, 0, C.H);
-    p.addColorStop(0, 'rgba(60,40,15,0.0)');
-    p.addColorStop(0.08, 'rgba(60,40,15,0.4)');
-    p.addColorStop(1, 'rgba(40,25,8,0.65)');
-    g.fillStyle = p;
-    g.fillRect(0, 1140, C.W, C.H - 1140);
+    g.fillRect(0, -BG_EXT, C.W, C.H + 2 * BG_EXT);
     return c;
   }
 
@@ -1400,10 +1407,24 @@
   }
 
   // ---------- HUD ----------
+  let panelGrad = null;
   function drawHud(game, view) {
     const g = view.g;
     const s = game.sides[0];
     const t = game.time;
+    // 底部操作区底板：从招兵栏上沿一直铺到屏幕底
+    const py = UI.shop.y - 10, pb = C.H + VIEW.padY;
+    if (!panelGrad || panelGrad.y !== py) {
+      panelGrad = g.createLinearGradient(0, py, 0, pb);
+      panelGrad.y = py;
+      panelGrad.addColorStop(0, 'rgba(60,40,15,0.0)');
+      panelGrad.addColorStop(Math.min(0.5, 12 / (pb - py)), 'rgba(60,40,15,0.42)');
+      panelGrad.addColorStop(1, 'rgba(40,25,8,0.7)');
+    }
+    g.fillStyle = panelGrad;
+    g.fillRect(-VIEW.padX, py, C.W + 2 * VIEW.padX, pb - py);
+    g.save();
+    g.translate(0, -VIEW.top);
     if (game.R.waves) {
       g.save();
       g.fillStyle = 'rgba(30,20,10,0.7)';
@@ -1412,7 +1433,6 @@
       text(g, `守关 · 第 ${game.wave} 波 · 下一波 ${Math.ceil(game.waveT)}s`, C.W / 2, 27, 18, game.wave % 4 === 3 ? '#ff8060' : '#ffe9a0');
       g.restore();
     } else drawHpBar(g, game.sides[1], 16, view);
-    drawHpBar(g, s, 1118, view);
     const left = game.R.time === Infinity ? game.time : Math.max(0, game.R.time - game.time);
     const mm = String(Math.floor(left / 60)).padStart(2, '0'), ss = String(Math.floor(left % 60)).padStart(2, '0');
     // 关卡号做成显眼的小牌，模式/难度退到第二行
@@ -1440,6 +1460,9 @@
     g.fill();
     text(g, `${mm}:${ss}`, 612, 28, 20, game.overtime ? '#ff6a4a' : '#ffe9a0', { font: 'sans-serif' });
     g.restore();
+    g.restore();
+    // 我方基地血条跟着招兵栏走
+    drawHpBar(g, s, UI.shop.y - 32, view);
     roundBtn(g, UI.pause, 'Ⅱ');
     roundBtn(g, UI.speed, view.speed + 'x');
     if (game.overtime && !game.over) {
@@ -1449,7 +1472,7 @@
       v.addColorStop(0, 'rgba(180,0,0,0)');
       v.addColorStop(1, 'rgba(180,0,0,0.8)');
       g.fillStyle = v;
-      g.fillRect(0, 0, C.W, C.H);
+      g.fillRect(-VIEW.padX, -VIEW.padY, C.W + 2 * VIEW.padX, C.H + 2 * VIEW.padY);
       g.globalAlpha = 0.7 + Math.sin(t * 6) * 0.25;
       text(g, '决战时刻 · 伤害翻倍', C.W / 2, 330, 26, '#b01c10', { stroke: '#f5e6c0', strokeW: 5 });
       g.restore();
@@ -1579,7 +1602,7 @@
     if (!bg) bg = makeBackground();
     g.save();
     if (game.shake > 0) g.translate((Math.random() - 0.5) * game.shake, (Math.random() - 0.5) * game.shake);
-    g.drawImage(bg, 0, 0);
+    g.drawImage(bg, 0, -BG_EXT);
     if (!view.test) {
       drawBoard(game, 1, view);
       drawBoard(game, 0, view);
@@ -1592,7 +1615,7 @@
     for (const p of game.projectiles) drawProjectile(g, p, game.time);
     for (const f of game.fx) if (!ground(f) && f.kind !== 'banner') drawFx(g, f, game);
     g.restore();
-    if (!view.test) {
+    if (!view.test && !view.noHud) {
       drawHud(game, view);
       for (const f of game.fx) if (f.kind === 'banner') drawBanner(g, f);
     }

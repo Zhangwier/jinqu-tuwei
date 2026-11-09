@@ -10,7 +10,7 @@ const W = +(process.argv[4] || 390);
 const H = +(process.argv[5] || 844);
 const DPR = +(process.argv[6] || 3);
 const THROTTLE = +(process.argv[7] || 1);
-const PORT = 9223;
+const PORT = +(process.env.CDP_PORT || 9223);
 const EDGE = 'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe';
 const profile = `${process.env.TEMP}\\jq-perf-${process.pid}`;
 
@@ -76,7 +76,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
     if (THROTTLE > 1) await send('Emulation.setCPUThrottlingRate', { rate: THROTTLE });
     await send('Page.enable');
     await send('Page.navigate', { url: URL });
-    await sleep(2500);
+    await sleep(+(process.env.WARMUP || 2500));
     const info = await evaluate(`(() => {
       const c = document.getElementById('game');
       return { title: document.title, w: c && c.width, h: c && c.height, game: !!(window.JQ && JQ.render) };
@@ -95,6 +95,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
         S.frames++;
         const d = now - last;
         S.intervals.push(d);
+        if (d > 40) (S.spikes = S.spikes || []).push([+((now - S.start) / 1000).toFixed(2), +d.toFixed(1)]);
         if (d > 25) S.long++;
         last = now;
         S.raf = requestAnimationFrame(tick);
@@ -117,6 +118,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
         renderMsPerFrame: +(S.render / S.frames).toFixed(2),
         stepMsPerFrame: +(S.step / S.frames).toFixed(2),
         canvas: [document.getElementById('game').width, document.getElementById('game').height],
+        spikes: (S.spikes || []).slice(0, 30),
         units: (window.JQ && window.__jqGame) ? window.__jqGame.units.length : null,
       };
     })()`);

@@ -5,7 +5,7 @@ const http = require('http');
 
 const FRAMES = +(process.argv[2] || 200);
 const FF = +(process.argv[3] || 100);
-const PORT = 9226;
+const PORT = +(process.env.CDP_PORT || 9226);
 const EDGE = 'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe';
 const profile = `${process.env.TEMP}\\jq-prof-${process.pid}`;
 
@@ -49,7 +49,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
       return r.result && r.result.result && r.result.result.value;
     };
     await send('Page.enable');
-    await send('Page.navigate', { url: 'http://127.0.0.1:8731/' });
+    await send('Page.navigate', { url: process.env.JQ_URL || 'http://127.0.0.1:8731/' });
     await sleep(1800);
     await evaluate(`(() => {
       const JQ = window.JQ, C = JQ.C;

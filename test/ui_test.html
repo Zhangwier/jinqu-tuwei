@@ -23,8 +23,8 @@
       s.buns = 500;
       const cv = document.getElementById('game');
       const ev = (type, x, y, pt) => {
-        const R = cv.getBoundingClientRect();
-        cv.dispatchEvent(new PointerEvent(type, { clientX: R.left + (x / 720) * R.width, clientY: R.top + (y / 1280) * R.height, bubbles: true, pointerId: 1, pointerType: pt || 'mouse' }));
+        const R = cv.getBoundingClientRect(), V = JQ.VIEW; // 画布铺满屏幕，逻辑区四周有留白
+        cv.dispatchEvent(new PointerEvent(type, { clientX: R.left + ((x + V.padX) / (720 + 2 * V.padX)) * R.width, clientY: R.top + ((y + V.padY) / (1280 + 2 * V.padY)) * R.height, bubbles: true, pointerId: 1, pointerType: pt || 'mouse' }));
       };
       const drag = (a, b, pt) => { ev('pointerdown', ...a, pt); ev('pointermove', (a[0] + b[0]) / 2, (a[1] + b[1]) / 2, pt); ev('pointermove', ...b, pt); ev('pointerup', ...b, pt); };
       const tap = (a) => { ev('pointerdown', ...a); ev('pointerup', ...a); };

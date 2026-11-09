@@ -233,6 +233,9 @@ const card = (k, key, lv) => JQ.makeCard(k, key, lv);
     b.place(card('unit', '刀', 5), 1, 2);
     assert.strictEqual(b.place(card('unit', '刀', 5), 1, 2), 'merge', '5 级小兵还能合');
     assert.strictEqual(b.cell(1, 2).card.level, 6, '合成到 6 级');
+    assert.strictEqual(JQ.unitCount(4), 2, '4 级每次召 2 个');
+    assert.strictEqual(JQ.unitCount(5), 4, '5 级门槛：每次召 4 个');
+    assert.strictEqual(JQ.unitCount(6), 4, '6 级保持 4 个');
   }
   // 兵种池：三国/西游/唐朝各有不同兵种，同字同属性
   {
@@ -272,6 +275,8 @@ const card = (k, key, lv) => JQ.makeCard(k, key, lv);
     const us = s.board.all().filter((x) => x.card && x.card.kind === 'unit');
     assert.strictEqual(us.length, 1, '两张刀被自动合成一张');
     assert.strictEqual(us[0].card.level, 2, '自动合成升到 2 级');
+    assert.strictEqual(s.craftStacks, 1, '棋盘合成叠 1 层巧手');
+    assert.strictEqual(g.units.filter((u) => u.bonusSpawn).length, 0, '不再额外召唤单位');
   }
   // 夏夏也能自动合备战席
   {
@@ -283,6 +288,18 @@ const card = (k, key, lv) => JQ.makeCard(k, key, lv);
     const shields = s.shop.filter((c) => c && c.key === '盾');
     assert.strictEqual(shields.length, 1, '备战席两张盾自动合一张');
     assert.strictEqual(shields[0].level, 2, '备战席自动合成升 2 级');
+    assert.strictEqual(s.craftStacks, 0, '备战席合成不叠巧手');
+  }
+  // 巧手最多 12 层
+  {
+    const g = new JQ.Game({ seed: 14, pack: 'custom', mode: 'classic' });
+    const s = g.sides[0];
+    s.craftStacks = 12;
+    s.board.place(card('unit', '刀'), 1, 2);
+    s.board.place(card('unit', '刀'), 1, 3);
+    g.spawnHero(s, '夏夏', 1, JQ.cellRect(0, 1, 2).cx);
+    for (let i = 0; i < 90; i++) g.step(1 / 60);
+    assert.strictEqual(s.craftStacks, 12, '巧手封顶 12 层');
   }
   // 文字概率：所有字都能抽到；场上有「张」时不能把「飞」刷到 70% 那种程度
   {

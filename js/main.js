@@ -5,28 +5,40 @@
 
   const canvas = document.getElementById('game');
   const g = canvas.getContext('2d', { alpha: false });
-  let scale = 1, dpr = 1, qScale = 1;
+  let scale = 1, dpr = 1, qScale = 1, padX = 0, padY = 0;
 
   function resize() {
     const native = window.devicePixelRatio || 1;
-    scale = Math.min(window.innerWidth / C.W, window.innerHeight / C.H);
+    const vw = window.innerWidth, vh = window.innerHeight;
+    scale = Math.min(vw / C.W, vh / C.H);
+    // 画布铺满整个屏幕：720x1280 的逻辑区居中，多出来的上下（长屏手机）/左右（电脑）留白
+    // 由背景延展填满，顶部/底部 HUD 贴到屏幕边上（见 JQ.setViewPad），不再留黑边。
+    padX = Math.max(0, (vw / scale - C.W) / 2);
+    padY = Math.max(0, (vh / scale - C.H) / 2);
     // 手机上 DPR 3 全量绘制太吃填充率：内部渲染封顶 1.75 倍，且总像素控制在约 100 万以内。
     // 画面仍按 CSS 铺满，肉眼几乎看不出差别，帧率能明显稳下来。
-    const area = C.W * scale * C.H * scale;
+    const area = vw * vh;
     let q = Math.min(native, 1.75) * qScale;
     const budget = 1000000;
     if (area * q * q > budget) q = Math.sqrt(budget / area);
     dpr = Math.max(1, q);
-    const w = Math.round(C.W * scale), h = Math.round(C.H * scale);
-    canvas.style.width = w + 'px';
-    canvas.style.height = h + 'px';
-    canvas.width = Math.round(w * dpr);
-    canvas.height = Math.round(h * dpr);
+    canvas.style.width = vw + 'px';
+    canvas.style.height = vh + 'px';
+    canvas.width = Math.round(vw * dpr);
+    canvas.height = Math.round(vh * dpr);
+    if (JQ.setViewPad) JQ.setViewPad(padX, padY);
     if (JQ.setRenderScale) JQ.setRenderScale(scale * dpr);
   }
   window.addEventListener('resize', resize);
   resize();
-  window.__jqPerf = () => ({ qScale, scale, dpr, w: canvas.width, h: canvas.height });
+  // 低画质：直接让这块画布的 shadowBlur 恒为 0（所有外发光一次性关掉）
+  let noGlow = false;
+  function setNoGlow() {
+    noGlow = true;
+    Object.defineProperty(g, 'shadowBlur', { configurable: true, get: () => 0, set: () => {} });
+  }
+  if (/[?&]lowfx=1/.test(location.search)) setNoGlow(); // 调试：直接开低画质
+  window.__jqPerf = () => ({ qScale, scale, dpr, noGlow, w: canvas.width, h: canvas.height });
 
   // ---------- 音效（WebAudio 合成，无外部文件） ----------
   let actx = null, muted = localStorage.getItem('jq_mute') === '1', lastHit = 0;
@@ -288,7 +300,7 @@
   // 拖动中实时预览落点、放下有弹跳反馈、放不下时卡片飞回原处。
   function toLogic(e) {
     const r = canvas.getBoundingClientRect();
-    return { x: ((e.clientX - r.left) / r.width) * C.W, y: ((e.clientY - r.top) / r.height) * C.H };
+    return { x: ((e.clientX - r.left) / r.width) * (C.W + 2 * padX) - padX, y: ((e.clientY - r.top) / r.height) * (C.H + 2 * padY) - padY };
   }
   const inRect = (p, r, pad) => ((pad = pad || 0), p.x >= r.x - pad && p.x <= r.x + r.w + pad && p.y >= r.y - pad && p.y <= r.y + r.h + pad);
   function shopAt(p) {
@@ -362,6 +374,14 @@
   }
 
   let buttons = [];
+  // 按钮按下反馈：点到的按钮缩到 0.93 再弹回（约 160ms）
+  let pressed = null;
+  function pressK(x, y) {
+    if (!pressed || pressed.x !== x || pressed.y !== y) return 1;
+    const k = (performance.now() - pressed.t) / 160;
+    if (k >= 1) return 1;
+    return 1 - 0.07 * Math.sin(Math.PI * k);
+  }
   let down = null;
 
   function takeTo(si, cell, allowReplace) {
@@ -395,7 +415,11 @@
     e.preventDefault();
     const p = toLogic(e);
     if (screen !== 'play') {
-      for (const b of buttons) if (inRect(p, b)) return b.fn();
+      // 后画的按钮在上层（弹窗），倒着找
+      for (let i = buttons.length - 1; i >= 0; i--) {
+        const b = buttons[i];
+        if (inRect(p, b)) return (pressed = { x: b.x, y: b.y, t: performance.now() }), b.fn();
+      }
       if (screen === 'help') {
         // 第一页规则 → 第二页英雄图鉴 → 返回
         if (helpPage === 0) helpPage = 1;
@@ -562,6 +586,8 @@
       return;
     }
     g.save();
+    const pk = pressK(x, y);
+    if (pk !== 1) (g.translate(x + w / 2, y + h / 2), g.scale(pk, pk), g.translate(-(x + w / 2), -(y + h / 2)));
     g.shadowColor = 'rgba(0,0,0,0.4)';
     g.shadowBlur = 8;
     g.shadowOffsetY = 3;
@@ -581,7 +607,7 @@
 
   function veil(a) {
     g.fillStyle = `rgba(20,14,6,${a})`;
-    g.fillRect(0, 0, C.W, C.H);
+    g.fillRect(-padX, -padY, C.W + 2 * padX, C.H + 2 * padY);
   }
 
   function title(s, y, size, color) {
@@ -590,120 +616,320 @@
     text(g, s, C.W / 2, y, size, color, { stroke: dark ? '#f5ead0' : '#1a1008', strokeW: size / 8 });
   }
 
-  let menuGame = null;
-  const menuView = { g, speed: 1, selected: -1, anims: [] };
+  let menuGame = null, menuPop = (location.search.match(/[?&]pop=(\w+)/) || [])[1] || null; // menuPop：'settings' 设置弹窗 / 'packs' 卡包抽屉
+  const menuView = { g, speed: 1, selected: -1, anims: [], noHud: true }; // 背景演示局不画 HUD
+  const MENU_PACKS = ['sanguo', 'xiyou', 'tang', 'custom', 'xuanhuan', 'mofa', 'song'];
+  const PACK_ART = {}; // 卡包封面图（AI 生图），没有的卡包画大字
+  for (const k of ['sanguo', 'tang']) {
+    const im = new Image();
+    im.src = `img/pack_${k}.jpg?v=20261109p`;
+    PACK_ART[k] = im;
+  }
+  function choosePack(k) {
+    pack = k;
+    helpPack = k;
+    localStorage.setItem('jq_pack', k);
+  }
+  // 圆形小图标按钮（齿轮/问号/箭头）
+  function iconBtn(x, y, size, label, fn) {
+    buttons.push({ x, y, w: size, h: size, fn });
+    const k = pressK(x, y);
+    g.save();
+    g.translate(x + size / 2, y + size / 2);
+    g.scale(k, k);
+    g.fillStyle = 'rgba(30,22,12,0.62)';
+    g.beginPath();
+    g.arc(0, 0, size / 2, 0, Math.PI * 2);
+    g.fill();
+    g.strokeStyle = 'rgba(255,215,140,0.7)';
+    g.lineWidth = 2;
+    g.stroke();
+    text(g, label, 0, 2, size * 0.5, '#ffe9a0');
+    g.restore();
+  }
+  // 底栏图标：朱红汉字印章 + 下方说明
+  function navItem(x, y, w, h, glyph, label, fn) {
+    buttons.push({ x, y, w, h, fn });
+    const k = pressK(x, y);
+    g.save();
+    g.translate(x + w / 2, y + h / 2);
+    g.scale(k, k);
+    JQ.rr(g, -26, -h / 2 + 10, 52, 52, 12);
+    g.fillStyle = '#8c2f1c';
+    g.fill();
+    g.strokeStyle = '#e6c27a';
+    g.lineWidth = 2;
+    g.stroke();
+    text(g, glyph, 0, -h / 2 + 37, 32, '#fff3d6');
+    text(g, label, 0, h / 2 - 18, 16, '#e8dcc0', { font: 'sans-serif', bold: false });
+    g.restore();
+  }
+  // 分段选择器（模式/难度）
+  function segmented(x, y, w, h, items, cur, pick, size) {
+    const n = items.length, sw = w / n;
+    g.save();
+    JQ.rr(g, x, y, w, h, h / 2);
+    g.fillStyle = 'rgba(25,18,10,0.66)';
+    g.fill();
+    g.strokeStyle = 'rgba(255,210,130,0.45)';
+    g.lineWidth = 1.5;
+    g.stroke();
+    items.forEach(([k, label], i) => {
+      const bx = x + i * sw;
+      buttons.push({ x: bx, y, w: sw, h, fn: () => pick(k) });
+      if (k === cur) {
+        JQ.rr(g, bx + 4, y + 4, sw - 8, h - 8, (h - 8) / 2);
+        const grd = g.createLinearGradient(0, y, 0, y + h);
+        grd.addColorStop(0, '#ffe39a');
+        grd.addColorStop(1, '#e09a33');
+        g.fillStyle = grd;
+        g.fill();
+      }
+      text(g, label, bx + sw / 2, y + h / 2 + 1, size || 24, k === cur ? '#3a2a10' : '#e8dcc0');
+    });
+    g.restore();
+  }
+  let menuShade = null;
   function drawMenu(dt) {
-    // 背景放一局 AI 对打当演示
+    // 背景放一局 AI 对打当演示；开局的快进分几帧做完，避免一次卡顿几百毫秒
     if (!menuGame || menuGame.over) {
       menuGame = new JQ.Game({ seed: (Math.random() * 1e9) | 0 });
       menuGame.aiT = [0, 0];
-      for (let k = 0; k < 60 * 60; k++) {
-        for (const sid of [0, 1]) if ((menuGame.aiT[sid] -= STEP) <= 0) (JQ.aiThink(menuGame, sid), (menuGame.aiT[sid] = 0.9));
-        menuGame.step(STEP);
-      }
+      menuGame.warm = 60 * 50;
     }
+    const warmSteps = menuGame.warm > 0 ? Math.min(menuGame.warm, 300) : 0;
+    for (let k = 0; k < warmSteps; k++) {
+      for (const sid of [0, 1]) if ((menuGame.aiT[sid] -= STEP) <= 0) (JQ.aiThink(menuGame, sid), (menuGame.aiT[sid] = 0.9));
+      menuGame.step(STEP);
+    }
+    menuGame.warm -= warmSteps;
     for (const sid of [0, 1]) if ((menuGame.aiT[sid] -= dt) <= 0) (JQ.aiThink(menuGame, sid), (menuGame.aiT[sid] = 0.9));
     menuGame.step(dt);
     JQ.render(menuGame, menuView);
-    veil(0.74);
-    title('禁区突围', 120, 100, '#1a1a1a');
-    text(g, '招兵 · 拼格 · 合字成将', C.W / 2, 200, 22, '#f5ead0');
-    text(g, '卡 包', C.W / 2, 240, 22, '#ffd23f');
-    const MENU_PACKS = ['sanguo', 'xiyou', 'tang', 'custom', 'xuanhuan', 'mofa', 'song'];
-    MENU_PACKS.forEach((k, i) => {
-      const pk = JQ.PACKS[k];
-      if (!pk) return;
-      const x = 28 + (i % 4) * 168, y = 260 + Math.floor(i / 4) * 62;
-      if (k === 'custom') {
-        const ready = JQ.customReady();
-        button(x, y, 160, 52, ready ? `自定义（${pk.heroes.length}将）` : '自定义 · 去配置', () => {
-          if (!ready) return openCustom();
-          pack = k;
-          helpPack = k;
-          localStorage.setItem('jq_pack', k);
-        }, { on: pack === k, size: ready ? 20 : 16 });
-        return;
-      }
-      if (!pk.open) {
-        g.save();
-        g.globalAlpha = 0.45;
-        JQ.rr(g, x, y, 160, 52, 14);
-        g.fillStyle = '#3a3226';
-        g.fill();
-        g.restore();
-        text(g, pk.name + ' · 未解锁', x + 80, y + 27, 18, '#9a8f7a');
-        return;
-      }
-      button(x, y, 160, 52, `${pk.name}（${pk.heroes.length}将）`, () => {
-        pack = k;
-        helpPack = k;
-        localStorage.setItem('jq_pack', k);
-      }, { on: pack === k, size: 20 });
-    });
-    text(g, '模 式', C.W / 2, 404, 22, '#ffd23f');
-    Object.entries(JQ.MODES).forEach(([k, m], i) => {
-      button(40 + i * 220, 422, 200, 54, m.name, () => {
-        mode = k;
-        localStorage.setItem('jq_mode', k);
-      }, { on: mode === k, size: 28 });
-    });
+    // 中间留给背景战斗：整体只压一层薄纱，上下两头再加深一点托住文字
+    veil(0.42);
+    const top = -JQ.VIEW.top, bot = C.H + JQ.VIEW.bot;
+    if (!menuShade || menuShade.top !== top || menuShade.bot !== bot) {
+      const a = g.createLinearGradient(0, top, 0, 440);
+      a.addColorStop(0, 'rgba(20,14,6,0.72)');
+      a.addColorStop(0.75, 'rgba(20,14,6,0.45)');
+      a.addColorStop(1, 'rgba(20,14,6,0)');
+      const b = g.createLinearGradient(0, 800, 0, bot);
+      b.addColorStop(0, 'rgba(20,14,6,0)');
+      b.addColorStop(0.3, 'rgba(20,14,6,0.6)');
+      b.addColorStop(1, 'rgba(20,14,6,0.85)');
+      menuShade = { top, bot, a, b };
+    }
+    g.fillStyle = menuShade.a;
+    g.fillRect(-padX, top, C.W + 2 * padX, 440 - top);
+    g.fillStyle = menuShade.b;
+    g.fillRect(-padX, 800, C.W + 2 * padX, bot - 800);
+
+    iconBtn(16, top + 14, 56, '?', () => ((helpBack = 'menu'), (helpPage = 0), (screen = 'help')));
+    iconBtn(648, top + 14, 56, '⚙', () => (menuPop = 'settings'));
+    title('禁区突围', 110, 92, '#1a1a1a');
+    text(g, '招兵 · 拼格 · 合字成将', C.W / 2, 182, 20, '#f5ead0');
+    segmented(110, 210, 500, 56, Object.entries(JQ.MODES).map(([k, m]) => [k, m.name]), mode, (k) => {
+      mode = k;
+      localStorage.setItem('jq_mode', k);
+    }, 26);
     const M = JQ.MODES[mode];
-    wrap(M.desc, 32).forEach((l, i) => text(g, l, C.W / 2, 498 + i * 22, 16, '#f5ead0', { bold: false }));
+    text(g, wrap(M.desc, 40)[0], C.W / 2, 290, 15, '#e8dcc0', { bold: false, font: 'sans-serif' });
     const r = rec(mode);
     if (mode === 'classic' || mode === 'fate') {
       const st = stageOf();
-      // 关卡号做成主视觉，不再是一行小字
-      panel(170, 524, 380, 68, 'rgba(255,220,150,0.08)', 'rgba(255,210,120,0.45)', 1.5);
-      text(g, `第 ${st} 关`, C.W / 2 - 28, 552, 30, '#ffe9a0', { stroke: '#2a1a08', strokeW: 5 });
-      text(g, `/ ${C.MAX_STAGE}`, C.W / 2 + 108, 556, 15, '#bfa878', { font: 'sans-serif', bold: false });
+      // 关卡牌：点一下进选关
+      buttons.push({ x: 170, y: 308, w: 380, h: 84, fn: () => openStages() });
+      const k = pressK(170, 308);
       g.save();
-      JQ.rr(g, 210, 576, 300, 9, 5);
+      g.translate(C.W / 2, 350);
+      g.scale(k, k);
+      g.translate(-C.W / 2, -350);
+      panel(170, 308, 380, 84, 'rgba(25,16,8,0.62)', 'rgba(255,210,120,0.6)', 2);
+      text(g, `第 ${st} 关`, C.W / 2 - 20, 340, 34, '#ffe9a0', { stroke: '#2a1a08', strokeW: 5 });
+      text(g, `/ ${C.MAX_STAGE}`, C.W / 2 + 102, 344, 15, '#bfa878', { font: 'sans-serif', bold: false });
+      text(g, '选关 ›', 532, 341, 14, '#e6c27a', { align: 'right', font: 'sans-serif', bold: false });
+      JQ.rr(g, 200, 368, 320, 8, 4);
       g.fillStyle = 'rgba(255,220,160,0.18)';
       g.fill();
-      JQ.rr(g, 210, 576, Math.max(4, (300 * st) / C.MAX_STAGE), 9, 5);
-      g.fillStyle = '#ffcf5a';
+      JQ.rr(g, 200, 368, Math.max(4, (320 * bestOf()) / C.MAX_STAGE), 8, 4);
+      g.fillStyle = '#e6b04a';
       g.fill();
       g.restore();
+      const info = mode === 'fate'
+        ? `最佳 ${fateSave.best} 关 · ${r.win} 胜 ${r.lose} 负 · 金币 ${fateSave.coins} · 敌强 ×${JQ.stageBoost(st).toFixed(2)}`
+        : `${r.win} 胜 ${r.lose} 负 · 已解锁 ${classicBest} 关 · 敌强 ×${JQ.stageBoost(st).toFixed(2)}`;
+      text(g, info, C.W / 2, 410, 13, '#d8c8a0', { font: 'sans-serif', bold: false });
+    } else {
+      panel(210, 308, 300, 64, 'rgba(25,16,8,0.62)', 'rgba(255,210,120,0.6)', 2);
+      text(g, `最佳：第 ${r.best || 0} 波`, C.W / 2, 340, 28, '#ffe9a0', { stroke: '#2a1a08', strokeW: 5 });
+      text(g, `敌军数量 ×${JQ.aiProfile(difficulty, player).wave} · 不限时`, C.W / 2, 392, 13, '#d8c8a0', { font: 'sans-serif', bold: false });
     }
+
+    // 下半屏：卡包 → 开战 → 难度
+    const open = MENU_PACKS.filter((k) => JQ.PACKS[k] && JQ.PACKS[k].open && (k !== 'custom' || JQ.customReady()));
+    const cyc = (d) => choosePack(open[(open.indexOf(pack) + d + open.length) % open.length]);
+    const pk = JQ.PACKS[pack];
     if (mode === 'fate') {
       const eq = fateSave.equipped.map((id) => JQ.TALENT_BY_ID[id].name).join('、') || '未装备';
-      text(g, `最佳 ${fateSave.best} 关 · 战绩 ${r.win} 胜 ${r.lose} 负 · 金币 ${fateSave.coins}`, C.W / 2, 600, 13, '#d8c8a0', { font: 'sans-serif', bold: false });
-      button(160, 612, 400, 36, `天赋：${eq}`, () => (screen = 'talents'), { size: 17 });
-    } else if (mode === 'classic') {
-      text(g, `战绩 ${r.win} 胜 ${r.lose} 负 · 已解锁 ${classicBest} 关`, C.W / 2, 600, 13, '#d8c8a0', { font: 'sans-serif', bold: false });
-    } else text(g, `最佳：守到第 ${r.best || 0} 波`, C.W / 2, 558, 15, '#d8c8a0', { font: 'sans-serif', bold: false });
-    text(g, '难 度', C.W / 2, 664, 22, '#ffd23f');
-    JQ.DIFF_ORDER.forEach((k, i) =>
-      button(110 + i * 240, 682, 220, 48, JQ.DIFF[k].name, () => {
-        difficulty = k;
-        localStorage.setItem('jq_diff', k);
-      }, { on: difficulty === k, size: 26 })
-    );
-    const D = JQ.aiProfile(difficulty, player);
-    if (mode === 'classic' || mode === 'fate') {
-      const st = stageOf();
-      text(g, `第 ${st} 关 · 敌方强度 ×${JQ.stageBoost(st).toFixed(2)}`, 30, 740, 14, '#d8c8a0', { align: 'left', font: 'sans-serif', bold: false });
-      button(520, 732, 160, 36, '选 关', () => openStages(), { size: 17 });
-    } else text(g, `敌军数量 ×${D.wave} · 不限时`, C.W / 2, 740, 15, '#d8c8a0', { font: 'sans-serif', bold: false });
-    button(210, 786, 300, 82, '开 战', newGame, { on: true, size: 44 });
-    button(30, 874, 210, 60, '玩法说明', () => ((helpBack = 'menu'), (helpPage = 0), (screen = 'help')), { size: 24 });
-    button(255, 874, 210, 60, '英雄图鉴', () => ((helpBack = 'menu'), (helpPage = 1), (screen = 'help')), { size: 24 });
-    button(480, 874, 210, 60, '小兵图鉴', () => (screen = 'units'), { size: 24 });
-    button(60, 940, 290, 60, muted ? '音效：关' : '音效：开', () => {
+      button(170, 818, 380, 44, `天赋：${eq}`, () => (screen = 'talents'), { size: 17 });
+    }
+    iconBtn(116, 878, 56, '‹', () => cyc(-1));
+    iconBtn(548, 878, 56, '›', () => cyc(1));
+    buttons.push({ x: 184, y: 874, w: 352, h: 64, fn: () => (menuPop = 'packs') });
+    {
+      const k = pressK(184, 874);
+      g.save();
+      g.translate(C.W / 2, 906);
+      g.scale(k, k);
+      g.translate(-C.W / 2, -906);
+      panel(184, 874, 352, 64, 'rgba(25,16,8,0.7)', 'rgba(255,210,120,0.6)', 2);
+      text(g, '卡包', 222, 906, 16, '#bfa878', { font: 'sans-serif', bold: false });
+      text(g, `${pk.name}（${pk.heroes.length}将）`, C.W / 2 + 16, 905, 26, '#ffe9a0');
+      text(g, '▾', 514, 906, 16, '#e6c27a', { font: 'sans-serif' });
+      g.restore();
+    }
+    // 开战：最大最亮，带呼吸光
+    {
+      const x = 160, y = 956, w = 400, h = 100, k = pressK(x, y);
+      buttons.push({ x, y, w, h, fn: newGame });
+      g.save();
+      g.translate(x + w / 2, y + h / 2);
+      g.scale(k, k);
+      g.shadowColor = '#ffcf5a';
+      g.shadowBlur = 16 + Math.sin(performance.now() / 320) * 10;
+      JQ.rr(g, -w / 2, -h / 2, w, h, 24);
+      const grd = g.createLinearGradient(0, -h / 2, 0, h / 2);
+      grd.addColorStop(0, '#ffe39a');
+      grd.addColorStop(0.55, '#f0b443');
+      grd.addColorStop(1, '#c8791c');
+      g.fillStyle = grd;
+      g.fill();
+      g.shadowBlur = 0;
+      g.lineWidth = 3.5;
+      g.strokeStyle = '#5a3a12';
+      g.stroke();
+      JQ.rr(g, -w / 2 + 7, -h / 2 + 7, w - 14, h - 14, 18);
+      g.strokeStyle = 'rgba(255,248,220,0.55)';
+      g.lineWidth = 1.5;
+      g.stroke();
+      text(g, '开  战', 0, 3, 48, '#3a2008', { stroke: '#ffeec0', strokeW: 3 });
+      g.restore();
+    }
+    text(g, '难度', 226, 1098, 16, '#bfa878', { font: 'sans-serif', bold: false });
+    segmented(256, 1074, 260, 48, JQ.DIFF_ORDER.map((k) => [k, JQ.DIFF[k].name]), difficulty, (k) => {
+      difficulty = k;
+      localStorage.setItem('jq_diff', k);
+    }, 22);
+
+    // 底栏：贴屏幕底
+    const nh = 104, ny = Math.max(1134, bot - nh);
+    g.save();
+    g.fillStyle = 'rgba(18,13,8,0.86)';
+    g.fillRect(-padX, ny, C.W + 2 * padX, bot - ny);
+    g.fillStyle = 'rgba(230,194,122,0.55)';
+    g.fillRect(-padX, ny, C.W + 2 * padX, 1.5);
+    g.restore();
+    const nav = [
+      ['将', '英雄图鉴', () => ((helpBack = 'menu'), (helpPage = 1), (screen = 'help'))],
+      ['兵', '小兵图鉴', () => (screen = 'units')],
+      ['运', '天赋', () => ((mode = 'fate'), localStorage.setItem('jq_mode', 'fate'), (screen = 'talents'))],
+      ['编', '自定义', () => openCustom()],
+      ['试', '测试场', () => openTestLab()],
+    ];
+    nav.forEach(([gl, label, fn], i) => navItem(i * 144, ny, 144, nh, gl, label, fn));
+
+    if (menuPop === 'settings') drawSettingsPop();
+    else if (menuPop === 'packs') drawPacksPop();
+  }
+
+  // 弹窗通用：先铺一层挡板（点空白关闭），再画面板
+  function popBase(x, y, w, h, titleStr) {
+    buttons.push({ x: -padX, y: -padY, w: C.W + 2 * padX, h: C.H + 2 * padY, fn: () => (menuPop = null) });
+    veil(0.55);
+    buttons.push({ x, y, w, h, fn: () => {} });
+    panel(x, y, w, h, 'rgba(32,22,12,0.96)', '#c9a35a', 2.5);
+    text(g, titleStr, x + w / 2, y + 40, 30, '#ffe9a0', { stroke: '#2a1a08', strokeW: 4 });
+    iconBtn(x + w - 56, y + 12, 44, '×', () => (menuPop = null));
+  }
+  function drawSettingsPop() {
+    const x = 110, y = 400, w = 500, h = 360;
+    popBase(x, y, w, h, '设 置');
+    const row = (i, label, on, fn) => {
+      const ry = y + 90 + i * 84;
+      text(g, label, x + 36, ry + 29, 24, '#f5ead0', { align: 'left' });
+      buttons.push({ x: x + 300, y: ry, w: 170, h: 58, fn });
+      g.save();
+      JQ.rr(g, x + 360, ry + 10, 90, 38, 19);
+      g.fillStyle = on ? '#d8962c' : '#4a4030';
+      g.fill();
+      g.beginPath();
+      g.arc(on ? x + 431 : x + 379, ry + 29, 15, 0, Math.PI * 2);
+      g.fillStyle = '#fff3d6';
+      g.fill();
+      g.restore();
+      text(g, on ? '开' : '关', x + 334, ry + 30, 18, on ? '#ffd27a' : '#9a8f7a', { font: 'sans-serif' });
+    };
+    row(0, '音效', !muted, () => {
       muted = !muted;
       localStorage.setItem('jq_mute', muted ? '1' : '0');
-    }, { size: 26 });
-    button(370, 940, 290, 60, dblSell ? '双击卖卡：开' : '双击卖卡：关', () => {
+    });
+    row(1, '双击卖卡', dblSell, () => {
       dblSell = !dblSell;
       localStorage.setItem('jq_dblsell', dblSell ? '1' : '0');
-    }, { size: 26 });
-    button(60, 1006, 290, 60, skillToast ? '技能弹字：开' : '技能弹字：关', () => {
+    });
+    row(2, '技能弹字/大招横幅', skillToast, () => {
       skillToast = !skillToast;
       localStorage.setItem('jq_skilltoast', skillToast ? '1' : '0');
       if (game) game.skillToast = skillToast;
-    }, { size: 26 });
-    button(370, 1006, 290, 60, '自定义卡包', () => openCustom(), { size: 26 });
-    button(210, 1068, 300, 42, '测试场', () => openTestLab(), { size: 20 });
+    });
+  }
+  function drawPacksPop() {
+    const x = 40, y = 250, w = 640, h = 760;
+    popBase(x, y, w, h, '选择卡包');
+    MENU_PACKS.forEach((k, i) => {
+      const pk = JQ.PACKS[k];
+      if (!pk) return;
+      const cx = x + 24 + (i % 2) * 304, cy = y + 80 + Math.floor(i / 2) * 166, cw = 288, ch = 152;
+      const ready = k !== 'custom' || JQ.customReady();
+      const locked = !pk.open;
+      if (!locked) buttons.push({ x: cx, y: cy, w: cw, h: ch, fn: () => (ready ? (choosePack(k), (menuPop = null)) : ((menuPop = null), openCustom())) });
+      const kk = pressK(cx, cy);
+      g.save();
+      g.translate(cx + cw / 2, cy + ch / 2);
+      g.scale(kk, kk);
+      g.translate(-(cx + cw / 2), -(cy + ch / 2));
+      JQ.rr(g, cx, cy, cw, ch, 14);
+      g.save();
+      g.clip();
+      const art = PACK_ART[k];
+      if (art && art.complete && art.naturalWidth) {
+        const s = Math.max(cw / art.naturalWidth, ch / art.naturalHeight);
+        const iw = art.naturalWidth * s, ih = art.naturalHeight * s;
+        g.drawImage(art, cx + (cw - iw) / 2, cy + (ch - ih) * 0.4, iw, ih);
+      } else {
+        g.fillStyle = locked ? '#2a241c' : '#5a3d22';
+        g.fillRect(cx, cy, cw, ch);
+        g.globalAlpha = 0.22;
+        text(g, pk.name.slice(0, 1), cx + cw - 70, cy + ch / 2 + 6, 120, '#f5e2b8');
+        g.globalAlpha = 1;
+      }
+      const sh = g.createLinearGradient(0, cy + ch * 0.4, 0, cy + ch);
+      sh.addColorStop(0, 'rgba(15,10,5,0)');
+      sh.addColorStop(1, 'rgba(15,10,5,0.85)');
+      g.fillStyle = sh;
+      g.fillRect(cx, cy, cw, ch);
+      if (locked) (g.fillStyle = 'rgba(15,12,8,0.6)'), g.fillRect(cx, cy, cw, ch);
+      g.restore();
+      g.lineWidth = pack === k ? 4 : 2;
+      g.strokeStyle = pack === k ? '#ffcf5a' : 'rgba(230,194,122,0.5)';
+      g.stroke();
+      text(g, pk.name, cx + 18, cy + ch - 46, 30, locked ? '#8a7f6a' : '#fff3d6', { align: 'left', stroke: '#1a1008', strokeW: 4 });
+      const sub = locked ? '未解锁' : k === 'custom' ? (ready ? `${pk.heroes.length} 将 · 自选` : '去配置') : `${pk.heroes.length} 将 · ${(pk.units || []).length} 种兵`;
+      text(g, sub, cx + 18, cy + ch - 16, 15, locked ? '#7a705c' : '#e8dcc0', { align: 'left', font: 'sans-serif', bold: false });
+      if (pack === k) text(g, '出战中', cx + cw - 46, cy + 22, 15, '#ffcf5a', { font: 'sans-serif', stroke: '#1a1008', strokeW: 3 });
+      g.restore();
+    });
   }
 
   // ---------- 选关 ----------
@@ -973,7 +1199,7 @@
     g.save();
     g.fillStyle = 'rgba(18,12,6,0.94)';
     g.fillRect(0, 0, C.W, 52);
-    g.fillRect(0, 1120, C.W, 160);
+    g.fillRect(-padX, 1120, C.W + 2 * padX, 160 + padY);
     g.restore();
     text(g, '测试场', 18, 26, 18, '#ffd23f', { align: 'left' });
     text(g, `蓝方 ${testAlive(0).length} vs 红方 ${testAlive(1).length}`, C.W / 2, 26, 19, '#ffe9a0', { stroke: '#1a1008', strokeW: 4 });
@@ -1048,19 +1274,19 @@
       const d = UNITS[k];
       const x = 18 + (i % 2) * 350, y = 126 + Math.floor(i / 2) * 128, w = 334, h = 120;
       panel(x, y, w, h, 'rgba(255,240,210,0.06)', 'rgba(255,220,150,0.3)', 1.5);
-      const col = d.assassin ? '#b48cff' : d.ranged ? '#3f8cff' : d.rangedReduce ? '#8a9ab0' : '#d08030';
+      // 颜色只给等级用：这里一律朱红竖条，兵种类型写成文字
       g.save();
-      g.fillStyle = col;
+      g.fillStyle = '#8c2f1c';
       JQ.rr(g, x + 1, y + 8, 4, h - 16, 2);
       g.fill();
       g.restore();
       text(g, k, x + 38, y + 50, 38, '#f5ead0', { stroke: '#1a1008', strokeW: 4 });
-      text(g, `${k} · ${role(d)}`, x + 72, y + 26, 20, '#ffd23f', { align: 'left' });
+      text(g, `${k} · ${role(d)}`, x + 72, y + 26, 20, '#f0d698', { align: 'left' });
       text(g, d.desc, x + 72, y + 50, 12, '#bfb39a', { align: 'left', bold: false, font: 'sans-serif' });
       text(g, `血 ${d.hp} · 攻 ${d.atk} · 射程 ${d.range}`, x + 72, y + 76, 12, '#e8dcc0', { align: 'left', bold: false, font: 'sans-serif' });
       text(g, `攻速 ${d.rate} · 移速 ${d.speed} · 冷却 ${d.cd}s`, x + 72, y + 96, 12, '#e8dcc0', { align: 'left', bold: false, font: 'sans-serif' });
       const packs = Object.keys(JQ.PACK_UNITS).filter((p) => p !== 'custom' && JQ.PACK_UNITS[p].includes(k)).map((p) => JQ.PACKS[p].name);
-      text(g, `出场：${packs.join('/') || '仅自定义'} · 自定义可选`, x + 72, y + 112, 10, '#9fe0a0', { align: 'left', bold: false, font: 'sans-serif' });
+      text(g, `出场：${packs.join('/') || '仅自定义'} · 自定义可选`, x + 72, y + 112, 10, '#c9b48a', { align: 'left', bold: false, font: 'sans-serif' });
     });
     button(210, 1170, 300, 58, '返 回', () => (screen = 'menu'), { size: 24 });
   }
@@ -1079,17 +1305,18 @@
       if (!h) return;
       const x = i % 2 ? 368 : 18, y = 150 + Math.floor(i / 2) * 136;
       g.save();
-      g.fillStyle = JQ.alphaHex(h.aura, 0.14);
+      // 名字和底色不再用英雄光晕色（容易和等级色 灰绿蓝紫金 混淆），统一米金
+      g.fillStyle = 'rgba(255,240,210,0.07)';
       JQ.rr(g, x - 6, y - 6, 340, 128, 10);
       g.fill();
-      g.fillStyle = 'rgba(255,240,210,0.05)';
-      JQ.rr(g, x - 6, y - 6, 340, 128, 10);
-      g.fill();
-      g.fillStyle = h.aura;
+      g.strokeStyle = 'rgba(230,194,122,0.28)';
+      g.lineWidth = 1;
+      g.stroke();
+      g.fillStyle = '#8c2f1c';
       JQ.rr(g, x - 6, y + 2, 4, 108, 2);
       g.fill();
       g.restore();
-      text(g, h.name, x, y + 14, 27, h.aura, { align: 'left', stroke: '#000', strokeW: 4 });
+      text(g, h.name, x, y + 14, 27, '#f5e2b8', { align: 'left', stroke: '#000', strokeW: 4 });
       g.save();
       g.fillStyle = 'rgba(0,0,0,0.35)';
       JQ.rr(g, x + 58, y + 3, 64, 19, 8);
@@ -1107,12 +1334,13 @@
         }
         text(g, s, x, yy, z, color, opts);
       };
-      fit(`被动【${h.passive.name}】${h.passive.desc}`, y + 42, 13, '#9fe0a0', { align: 'left', bold: false, font: 'sans-serif' });
+      fit(`被动【${h.passive.name}】${h.passive.desc}`, y + 42, 13, '#d9c79a', { align: 'left', bold: false, font: 'sans-serif' });
       fit(`技能【${h.skill.name}】${h.skill.desc}`, y + 64, 13, '#e8dcc0', { align: 'left', bold: false, font: 'sans-serif' });
-      text(g, `大招【${h.ult.name}】`, x, y + 88, 14, '#ffd23f', { align: 'left' });
+      text(g, `大招【${h.ult.name}】`, x, y + 88, 14, '#e8a060', { align: 'left' });
       fit(h.ult.desc, y + 109, 12, '#bfb39a', { align: 'left', bold: false, font: 'sans-serif' });
     });
     text(g, '（点空白处返回）', C.W / 2, 1262, 16, '#bfb39a');
+    iconBtn(650, 22, 52, '×', () => ((helpPage = 0), (screen = helpBack)));
   }
 
   function drawPause() {
@@ -1147,12 +1375,15 @@
   }
 
   function catChip(t, x, y) {
-    const col = JQ.TALENT_CATS[t.cat] || '#888';
+    // 分类签统一墨色，不借用等级色
     g.save();
     JQ.rr(g, x, y, 44, 20, 9);
-    g.fillStyle = col;
+    g.fillStyle = '#2a1f16';
     g.fill();
-    text(g, t.cat, x + 22, y + 11, 12, '#fff', { font: 'sans-serif' });
+    g.strokeStyle = 'rgba(230,194,122,0.55)';
+    g.lineWidth = 1;
+    g.stroke();
+    text(g, t.cat, x + 22, y + 11, 12, '#e8d3a8', { font: 'sans-serif' });
     g.restore();
   }
 
@@ -1206,7 +1437,7 @@
     offers.forEach((t, i) => {
       const x = 24 + i * 228, y = 206, w = 216, h = 250;
       const can = fateSave.coins >= t.cost;
-      panel(x, y, w, h, 'rgba(255,240,210,0.07)', JQ.TALENT_CATS[t.cat], 2.5);
+      panel(x, y, w, h, 'rgba(255,240,210,0.07)', 'rgba(230,194,122,0.6)', 2);
       catChip(t, x + 12, y + 12);
       text(g, t.name, x + w / 2, y + 66, 30, '#f5ead0');
       wrapLines(t.desc, 12).slice(0, 4).forEach((l, k) => text(g, l, x + w / 2, y + 108 + k * 22, 15, '#d8c8a0', { bold: false, font: 'sans-serif' }));
@@ -1277,41 +1508,84 @@
   }
 
   function drawOver() {
-    veil(0.62);
+    // 结算：只压一层薄纱，统计放进中间的面板里，背景战斗仍隐约可见
+    veil(0.45);
     const w = game.winner;
     const staged = game.modeKey === 'classic' || game.modeKey === 'fate';
     const rw = lastReward;
-    if (game.R.waves) title(`守住 ${Math.max(0, game.wave - 1)} 波`, 330, 90, '#b8860b');
-    else if (staged) title(`第 ${game.stage} 关 · ${w === 0 ? '通关' : w === 1 ? '失败' : '平局'}`, 330, 60, w === 0 ? '#b8860b' : w === 1 ? '#7a1010' : '#333');
-    else title(w === 0 ? '突围成功' : w === 1 ? '兵败禁区' : '平分秋色', 330, 96, w === 0 ? '#b8860b' : w === 1 ? '#7a1010' : '#333');
-    const a = game.sides[0].stats, b = game.sides[1].stats;
+    const px = 60, py = 236, pw = 600, ph = 740;
+    panel(px, py, pw, ph, 'rgba(30,21,12,0.9)', '#c9a35a', 2.5);
+    g.save();
+    g.strokeStyle = 'rgba(201,163,90,0.35)';
+    g.lineWidth = 1;
+    JQ.rr(g, px + 8, py + 8, pw - 16, ph - 16, 10);
+    g.stroke();
+    g.restore();
+    // 胜负印章
+    const win = game.R.waves ? true : w === 0;
+    const word = game.R.waves ? '守关' : w === 0 ? (staged ? '通关' : '突围') : w === 1 ? '败北' : '平局';
+    g.save();
+    g.translate(C.W / 2, py + 10);
+    g.rotate(-0.05);
+    JQ.rr(g, -110, -46, 220, 92, 14);
+    g.fillStyle = win ? '#a8281a' : w === 1 ? '#4a4a4a' : '#6a5a3a';
+    g.fill();
+    g.strokeStyle = '#f2d9a0';
+    g.lineWidth = 3;
+    g.stroke();
+    text(g, word, 0, 2, 54, '#fff1d0');
+    g.restore();
+    const sub = game.R.waves ? `守住 ${Math.max(0, game.wave - 1)} 波 · 最佳 ${rec(game.modeKey).best} 波` : staged ? `第 ${game.stage} 关` : game.mode.name;
+    text(g, sub, C.W / 2, py + 86, 30, '#ffe9a0', { stroke: '#2a1a08', strokeW: 4 });
     const t = Math.floor(game.time);
+    text(g, `${game.mode.name} · ${game.diff.name} · 用时 ${Math.floor(t / 60)}分${t % 60}秒`, C.W / 2, py + 120, 15, '#bfa878', { font: 'sans-serif', bold: false });
+    // 我/敌 对比条
+    const A = game.sides[0].stats, B = game.sides[1].stats;
+    text(g, '我方', px + 120, py + 160, 17, '#8cc8ff', { font: 'sans-serif' });
+    text(g, '敌方', px + pw - 120, py + 160, 17, '#ff9a8a', { font: 'sans-serif' });
     [
-      `${game.mode.name} · ${game.diff.name}   用时 ${Math.floor(t / 60)}分${t % 60}秒` + (game.R.waves ? `   最佳 ${rec(game.modeKey).best} 波` : ''),
-      `召唤  我 ${a.summoned}  ·  敌 ${b.summoned}`,
-      `击杀  我 ${a.kills}  ·  敌 ${b.kills}`,
-      `英雄出场  我 ${a.heroes}  ·  敌 ${b.heroes}`,
-      `大招  我 ${a.ults}  ·  敌 ${b.ults}`,
-      `基地伤害  我 ${Math.round(a.baseDmg)}  ·  敌 ${Math.round(b.baseDmg)}`,
-    ].forEach((l, i) => text(g, l, C.W / 2, 408 + i * 40, 24, '#f5ead0'));
+      ['召唤', A.summoned, B.summoned],
+      ['击杀', A.kills, B.kills],
+      ['英雄出场', A.heroes, B.heroes],
+      ['大招', A.ults, B.ults],
+      ['基地伤害', Math.round(A.baseDmg), Math.round(B.baseDmg)],
+    ].forEach(([label, x, y], i) => {
+      const ry = py + 200 + i * 54, tot = Math.max(1, x + y), half = 230;
+      text(g, label, C.W / 2, ry - 2, 17, '#e8dcc0', { font: 'sans-serif', bold: false });
+      g.save();
+      JQ.rr(g, C.W / 2 - half, ry + 10, half * 2, 12, 6);
+      g.fillStyle = 'rgba(255,255,255,0.08)';
+      g.fill();
+      g.fillStyle = '#3d8bff';
+      JQ.rr(g, C.W / 2 - (half * x) / tot, ry + 10, (half * x) / tot, 12, 6);
+      if (x) g.fill();
+      g.fillStyle = '#e0503a';
+      JQ.rr(g, C.W / 2, ry + 10, (half * y) / tot, 12, 6);
+      if (y) g.fill();
+      g.restore();
+      text(g, String(x), C.W / 2 - half - 6, ry + 16, 20, '#cfe6ff', { align: 'right', font: 'sans-serif' });
+      text(g, String(y), C.W / 2 + half + 6, ry + 16, 20, '#ffd2c8', { align: 'left', font: 'sans-serif' });
+    });
+    let ly = py + 486;
     if (rw && staged) {
       let line;
-      if (rw.win) line = rw.max ? `第 ${rw.stage} 关通关！已抵达第 ${C.MAX_STAGE} 关` : `第 ${rw.stage} 关通过 · 解锁第 ${rw.next} 关`;
-      else line = `第 ${rw.stage} 关失败 · 再试一次`;
-      text(g, line, C.W / 2, 666, 20, rw.win ? '#ffd23f' : '#f0c0a0', { stroke: '#3a2a10', strokeW: 4 });
-      if (rw.coins) text(g, `金币 +${rw.coins}${rw.shop ? ' · 商店已刷新' : ''}`, C.W / 2, 694, 15, '#ffd23f', { font: 'sans-serif', bold: false });
-    } else if (rw && rw.coins) text(g, `获得 ${rw.coins} 金币${rw.shop ? ' · 商店已刷新' : ''}`, C.W / 2, 672, 22, '#ffd23f', { stroke: '#3a2a10', strokeW: 4 });
+      if (rw.win) line = rw.max ? `已抵达第 ${C.MAX_STAGE} 关！` : `解锁第 ${rw.next} 关`;
+      else line = '再试一次，换个阵容或天赋';
+      text(g, line, C.W / 2, ly, 22, rw.win ? '#ffd23f' : '#f0c0a0', { stroke: '#3a2a10', strokeW: 4 });
+      if (rw.coins) text(g, `金币 +${rw.coins}${rw.shop ? ' · 商店已刷新' : ''}`, C.W / 2, ly + 30, 15, '#ffd23f', { font: 'sans-serif', bold: false });
+    } else if (rw && rw.coins) text(g, `获得 ${rw.coins} 金币${rw.shop ? ' · 商店已刷新' : ''}`, C.W / 2, ly, 22, '#ffd23f', { stroke: '#3a2a10', strokeW: 4 });
     const canNext = rw && rw.win && !rw.max && staged;
-    button(210, 712, 300, 78, canNext ? `下一关（第 ${rw.next} 关）` : staged ? `重试第 ${game.stage} 关` : '再来一局', () => {
+    button(120, py + 540, 480, 88, canNext ? `下一关 · 第 ${rw.next} 关` : staged ? `重试第 ${game.stage} 关` : '再来一局', () => {
       if (canNext) setStage(rw.next);
       newGame();
-    }, { on: true, size: canNext ? 30 : 34 });
-    button(210, 802, 300, 66, staged ? '选 关' : game.modeKey === 'fate' ? '天赋商店' : '返回主页', () => {
-      if (staged) openStages();
-      else screen = game.modeKey === 'fate' ? 'talents' : 'menu';
-    });
-    if (game.modeKey === 'fate') button(210, 880, 300, 60, '天赋商店', () => (screen = 'talents'), { size: 26 });
-    if (staged || game.modeKey === 'fate') button(210, 952, 300, 56, '返回主页', () => (screen = 'menu'), { size: 24 });
+    }, { on: true, size: canNext ? 32 : 34 });
+    // 次级操作并排
+    const sec = [];
+    if (staged) sec.push(['选 关', () => openStages()]);
+    if (game.modeKey === 'fate') sec.push(['天赋商店', () => (screen = 'talents')]);
+    sec.push(['返回主页', () => (screen = 'menu')]);
+    const sw = (480 - (sec.length - 1) * 16) / sec.length;
+    sec.forEach(([label, fn], i) => button(120 + i * (sw + 16), py + 648, sw, 64, label, fn, { size: 24 }));
   }
 
   // ---------- 主循环 ----------
@@ -1322,7 +1596,8 @@
     // rAF 的时间戳偶尔会早于脚本启动时记的 last，夹到 0 以上，避免 game.time 倒退
     const dt = Math.max(0, Math.min(0.1, (now - last) / 1000));
     last = now;
-    g.setTransform(scale * dpr, 0, 0, scale * dpr, 0, 0);
+    g.setTransform(scale * dpr, 0, 0, scale * dpr, padX * scale * dpr, padY * scale * dpr);
+    if (padX > 0) (g.fillStyle = '#1d1810'), g.fillRect(-padX, -padY, C.W + 2 * padX, C.H + 2 * padY); // 电脑横屏：两侧底色
     buttons = [];
     if (screen === 'menu') drawMenu(dt);
     else if (screen === 'stages') drawStages();
@@ -1380,9 +1655,10 @@
         if (fpsN >= 90) {
           const avg = (fpsAcc / fpsN) * 1000;
           if (avg > 20 && qScale > 0.62 && now - lastQ > 4000) {
-            qScale = Math.max(0.62, qScale * 0.85);
+            // 第一次掉帧先关掉所有发光（shadowBlur 在手机上最贵），还不够再降分辨率
+            if (!noGlow) setNoGlow();
+            else qScale = Math.max(0.62, qScale * 0.85), resize();
             lastQ = now;
-            resize();
           }
           fpsAcc = 0;
           fpsN = 0;

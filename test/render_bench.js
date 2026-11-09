@@ -9,7 +9,7 @@ const H = +(process.argv[3] || 2080);
 const FRAMES = +(process.argv[4] || 40);
 const FF = +(process.argv[5] || 120);
 const MUT = process.argv[6] || '';
-const PORT = 9224;
+const PORT = +(process.env.CDP_PORT || 9224);
 const EDGE = 'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe';
 const profile = `${process.env.TEMP}\\jq-bench-${process.pid}`;
 
@@ -72,6 +72,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
       g.setTransform(sx, 0, 0, sy, 0, 0);
       const view = { g, speed: 1, selected: -1, selectedCell: null, info: '', infoT: 0, heldCard: null, dragFrom: null, dragPos: null, hoverCell: null, target: null, anims: [], shopAnim: null, bunPop: 0 };
       const mut = '${MUT}';
+      if (mut === 'noglow') Object.defineProperty(g, 'shadowBlur', { get: () => 0, set: () => {} });
       if (mut === 'nounits') game.units = [];
       if (mut === 'nofx') game.fx = [];
       if (mut === 'nocard') for (const s of game.sides) for (const x of s.board.all()) x.card = null;
