@@ -79,6 +79,7 @@
       this.refreshes = 0;
       this.tileDry = 0; // 连续多少次刷新没看到格子
       this.xiaGiven = 0; // 自定义包带夏夏时，前两张文字卡保底给夏
+      this.xiaCraft = 0; // 夏夏本局已触发的“造物”次数，最多 3 次
       this.incomeMult = T.income;
       this.heroAlive = {};
       this.heroCd = {};
@@ -835,11 +836,12 @@
           if (this.move(s.id, a.r, a.c, b.r, b.c) === 'merge') {
             this.addFx({ kind: 'ring', x: rc.cx, y: rc.cy, r: 38, life: 0.5, color: HEROES['夏夏'].aura });
             this.addFx({ kind: 'text', x: rc.cx, y: rc.cy - 26, text: '巧手', color: HEROES['夏夏'].aura, life: 0.7, size: 16 });
-            // 巧手造物：合成后额外召出一个同等级单位，补回合成损失
+            // 巧手造物：合成后额外召出一个同等级单位，每局最多 3 次
             const merged = b.card;
-            if (merged && merged.kind === 'unit' && s.unitCap(merged.key) > s.aliveCount(merged.key)) {
+            if (merged && merged.kind === 'unit' && s.xiaCraft < 3 && s.unitCap(merged.key) > s.aliveCount(merged.key)) {
+              s.xiaCraft++;
               this.spawnUnit(s, merged.key, merged.level, rc.cx, { y: rc.cy, bonusSpawn: true });
-              this.addFx({ kind: 'text', x: rc.cx, y: rc.cy + 26, text: '造物', color: HEROES['夏夏'].aura, life: 0.7, size: 14 });
+              this.addFx({ kind: 'text', x: rc.cx, y: rc.cy + 26, text: `造物 ${s.xiaCraft}/3`, color: HEROES['夏夏'].aura, life: 0.8, size: 14 });
             }
           }
         } else {
