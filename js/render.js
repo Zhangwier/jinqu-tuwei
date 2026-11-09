@@ -41,7 +41,7 @@
     coin: [175, 600, 164, 164], bun: [341, 600, 168, 141], lock: [511, 600, 170, 164], chest: [683, 600, 196, 158],
   };
   const uiImg = new Image();
-  uiImg.src = 'img/ui.webp?v=20261110d';
+  uiImg.src = 'img/ui.webp?v=20261110e';
   const uiOk = () => uiImg.complete && uiImg.naturalWidth > 0;
   JQ.uiOk = uiOk;
   // 整张贴（图标），按宽高缩放
@@ -83,7 +83,7 @@
     knot: [0, 498, 192, 285], bar: [194, 498, 282, 73], scroll_long: [478, 498, 273, 123], divider: [753, 498, 248, 44],
   };
   const ui2Img = new Image();
-  ui2Img.src = 'img/ui2.webp?v=20261110d';
+  ui2Img.src = 'img/ui2.webp?v=20261110e';
   JQ.ui2Draw = function (g, name, x, y, w, h) {
     if (!(ui2Img.complete && ui2Img.naturalWidth)) return false;
     const a = ATLAS2[name];
@@ -93,7 +93,7 @@
   // 特效图：4 列 × 3 行，每格 256×341
   const FXS = { rays: [0, 0], ring: [1, 0], slash: [2, 0], bolt: [3, 0], fire: [0, 1], water: [1, 1], lotus: [2, 1], circle: [3, 1], pillar: [0, 2], sparkle: [1, 2], dust: [2, 2], fog: [3, 2] };
   const fxImg = new Image();
-  fxImg.src = 'img/fx.webp?v=20261110d';
+  fxImg.src = 'img/fx.webp?v=20261110e';
   // 加载后把每格转成小尺寸透明图（亮度当透明度），之后按普通方式画：
   // 比每次用 'lighter' 叠加 1024 大图便宜得多，在手机上差别很明显
   const fxCells = {};
@@ -334,27 +334,45 @@
   JQ.setStyle = (o) => {
     if (o.bg && o.bg !== STYLE.bg) bg = null;
     Object.assign(STYLE, o);
-    if (STYLE.bg === 'field') loadField();
+    if (STYLE.bg !== 'paper') loadBg(STYLE.bg);
     if (STYLE.unit === 'piece' && JQ.loadPieces) JQ.loadPieces();
   };
   let bg = null;
   const BG_EXT = 260; // 背景上下各多画一截，长屏手机不留黑边
   // 战场底图（AI 生图）：加载完重建背景缓存；没加载时用程序生成的宣纸地面
-  const fieldImg = new Image();
-  fieldImg.onload = () => (bg = null);
-  const loadField = () => fieldImg.src || (fieldImg.src = 'img/field.jpg?v=20261110d');
+  // 可选战场背景（AI 生图，img/bg_<id>.jpg），选中时才下载；paper = 原版程序生成的宣纸地面
+  JQ.BG_LIST = [{ id: 'paper', name: '宣纸' }, { id: 'chess', name: '楚河汉界' }, { id: 'qinglv', name: '青绿山水' }, { id: 'autumn', name: '金秋原野' }, { id: 'snow', name: '雪原红梅' }];
+  const bgImgs = {};
+  function loadBg(id) {
+    if (bgImgs[id]) return bgImgs[id];
+    const im = new Image();
+    im.onload = () => (bg = null);
+    im.src = `img/bg_${id}.jpg?v=20261110e`;
+    return (bgImgs[id] = im);
+  }
   function makeBackground() {
     const c = document.createElement('canvas');
     c.width = C.W;
     c.height = C.H + 2 * BG_EXT;
     const g = c.getContext('2d');
-    if (STYLE.bg === 'field' && fieldImg.complete && fieldImg.naturalWidth) {
-      // 按高度铺满（两侧裁掉一点），再压一层四周暗角
-      const s = c.height / fieldImg.naturalHeight, w = fieldImg.naturalWidth * s;
-      g.drawImage(fieldImg, (C.W - w) / 2, 0, w, c.height);
-      const v = g.createRadialGradient(C.W / 2, c.height / 2, 380, C.W / 2, c.height / 2, 1000);
+    const fieldImg = STYLE.bg !== 'paper' && bgImgs[STYLE.bg];
+    if (fieldImg && fieldImg.complete && fieldImg.naturalWidth) {
+      // 原比例画在 720×1280 逻辑区（图是 9:16，正好对齐中线），长屏多出的上下用图片边缘镜像延展
+      const iw = fieldImg.naturalWidth, ih = fieldImg.naturalHeight, k = ih / C.H;
+      g.drawImage(fieldImg, 0, 0, iw, ih, 0, BG_EXT, C.W, C.H);
+      g.save();
+      g.translate(0, BG_EXT);
+      g.scale(1, -1);
+      g.drawImage(fieldImg, 0, 0, iw, BG_EXT * k, 0, 0, C.W, BG_EXT);
+      g.restore();
+      g.save();
+      g.translate(0, BG_EXT + C.H);
+      g.scale(1, -1);
+      g.drawImage(fieldImg, 0, ih - BG_EXT * k, iw, BG_EXT * k, 0, -BG_EXT, C.W, BG_EXT);
+      g.restore();
+      const v = g.createRadialGradient(C.W / 2, c.height / 2, 420, C.W / 2, c.height / 2, 1000);
       v.addColorStop(0, 'rgba(0,0,0,0)');
-      v.addColorStop(1, 'rgba(40,25,5,0.42)');
+      v.addColorStop(1, 'rgba(40,25,5,0.3)');
       g.fillStyle = v;
       g.fillRect(0, 0, C.W, c.height);
       return c;
@@ -1019,7 +1037,7 @@
   // 棋子素材（AI 生图）：我方蓝边、敌方红边；小兵木质、英雄白玉金边。没加载时用代码画
   const pieceImg = new Image();
   pieceImg.onload = () => spriteCache.clear();
-  JQ.loadPieces = () => pieceImg.src || (pieceImg.src = 'img/pieces.webp?v=20261110d');
+  JQ.loadPieces = () => pieceImg.src || (pieceImg.src = 'img/pieces.webp?v=20261110e');
   const PIECE_SRC = { u0: [0, 0, 96, 96], u1: [98, 0, 96, 96], h0: [196, 0, 128, 128], h1: [326, 0, 128, 128] };
   function pieceBase(side, hero, buffed) {
     const R = hero ? 31 : 17, S = R * 2 + 8;
