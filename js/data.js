@@ -353,6 +353,173 @@
   ].forEach((h) => (HEROES[h.name] = h));
   JQ.HEROES = HEROES;
 
+  // ---------- 突破活动 · 第一期 ----------
+  // 三位英雄各三次突破：每次等级上限 +10；一突技能加效果，二突大招进化，三突专属被动。
+  // 字饰（orn）由 render.js 画在汉字周围；活动关卡 + 活动任务产出破阵石和将印。
+  const BRK_HERO = {
+    吕布: {
+      id: 'lvbu', seal: '无双令', orn: 'feather', ornName: '雉鸡翎',
+      quote: '人中吕布，马中赤兔。',
+      levels: [
+        {
+          title: '翎羽初展', stat: { hp: 1.05, atk: 1.05 },
+          summary: '方天横扫后自身攻击 +20%，持续 4 秒。',
+          skillAdd: [{ t: 'buff', self: true, atk: 1.2, dur: 4, fx: 'warcry', text: '无双' }],
+          skillNote: '横扫后攻击 +20%，持续 4 秒',
+        },
+        {
+          title: '神鬼乱舞', stat: { hp: 1.05, atk: 1.05 },
+          summary: '大招进化为「神鬼乱舞」：五连旋风斩，减伤 55%，收招震飞。',
+          ult: {
+            name: '神鬼乱舞', cd: 18, desc: '五连旋风斩，期间减伤 55%，收招震飞周围敌人', range: 150,
+            do: [{ t: 'spins', n: 5, r: 150, mult: 2.6, dr: 0.55 }, { t: 'aoe', at: 'self', r: 160, mult: 1.6, knock: 260, fx: 'shock', big: true, delay: 2.3 }],
+          },
+        },
+        {
+          title: '无双极意', stat: { hp: 1.06, atk: 1.06 },
+          summary: '专属被动「无双·极」：每次击杀攻击 +5%（最多 6 层），并回复 8% 血量。',
+          exclusive: { name: '无双·极', desc: '每次击杀攻击 +5%（最多 6 层），并回复 8% 血量', add: { rampage: { pct: 0.05, max: 6, heal: 0.08 } } },
+        },
+      ],
+    },
+    悟空: {
+      id: 'wukong', seal: '齐天令', orn: 'band', ornName: '金箍 · 筋斗云',
+      quote: '俺老孙去也！',
+      levels: [
+        {
+          title: '定海神针', stat: { hp: 1.05, atk: 1.05 },
+          summary: '金箍棒眩晕延长到 1.2 秒，并留下 2 秒定身金圈。',
+          skillAdd: [{ t: 'zone', at: 'densest', r: 100, dur: 2, tick: 0.45, mult: 0.7, stun: true, glyphs: '定' }],
+          skillPatch: { desc: '金箍棒砸向敌群，眩晕 1.2 秒并留下定身金圈', doStun: 1.2 },
+        },
+        {
+          title: '身外身', stat: { hp: 1.05, atk: 1.05 },
+          summary: '大招进化为「身外身」：4 个更强分身，真身攻击 +25%。',
+          ult: {
+            name: '身外身', cd: 18, desc: '变出 4 个更强分身，真身攻击 +25%，持续 12 秒', range: 300,
+            do: [{ t: 'clone', n: 4, pct: 0.55, life: 12, fx: 'clone' }, { t: 'aoe', at: 'self', r: 140, mult: 2.2 }, { t: 'buff', self: true, atk: 1.25, dur: 12, fx: 'warcry', text: '身外身' }],
+          },
+        },
+        {
+          title: '火眼金睛', stat: { hp: 1.06, atk: 1.06 },
+          summary: '专属被动「火眼金睛」：看破隐身，暴击 +15%，闪避 +10%。',
+          exclusive: { name: '火眼金睛', desc: '看破隐身，暴击 +15%，闪避 +10%', add: { trueSight: true, crit: 0.15, dodge: 0.1 } },
+        },
+      ],
+    },
+    岳飞: {
+      id: 'yuefei', seal: '精忠令', orn: 'flag', ornName: '岳字战旗',
+      quote: '还我河山。',
+      levels: [
+        {
+          title: '枪出如龙', stat: { hp: 1.05, atk: 1.05 },
+          summary: '沥泉枪后自身攻击 +20%，持续 5 秒。',
+          skillAdd: [{ t: 'buff', self: true, atk: 1.2, dur: 5, fx: 'warcry', text: '沥泉' }],
+          skillNote: '直刺后攻击 +20%，持续 5 秒',
+        },
+        {
+          title: '直捣黄龙', stat: { hp: 1.05, atk: 1.05 },
+          summary: '大招进化为「直捣黄龙」：5 倍冲锋，召 4 名岳家军，全军攻击 +40%。',
+          ult: {
+            name: '直捣黄龙', cd: 17, desc: '冲锋 5 倍伤害并击退，召来 4 名岳家军，全军攻击 +40% 持续 8 秒', range: 340,
+            do: [{ t: 'dash', mult: 5, knock: true }, { t: 'summon', unit: ['枪', '盾'], n: 4, fx: 'portal' }, { t: 'buff', r: 320, atk: 1.4, dur: 8, fx: 'warcry', text: '直捣黄龙' }],
+          },
+        },
+        {
+          title: '精忠报国', stat: { hp: 1.06, atk: 1.06 },
+          summary: '专属被动「精忠报国」：阵亡时全军攻击 +40%、获 20% 护盾，持续 8 秒。',
+          exclusive: { name: '精忠报国', desc: '阵亡时全军攻击 +40%、获 20% 护盾，持续 8 秒', add: { deathWarcry: { atk: 1.4, dur: 8, shield: 0.2, r: 340 } } },
+        },
+      ],
+    },
+  };
+
+  JQ.BREAKTHROUGH = {
+    v: 1,
+    name: '群雄破界',
+    period: '第一期',
+    heroes: ['吕布', '悟空', '岳飞'],
+    materials: {
+      stone: { name: '破阵石', desc: '活动关卡与任务产出，所有突破通用' },
+      seal: { name: '将印', desc: '按英雄区分，通关对应活动关卡与完成任务获得' },
+    },
+    costs: [
+      { stone: 2, seal: 1 },
+      { stone: 4, seal: 2 },
+      { stone: 6, seal: 3 },
+    ],
+    stages: [
+      {
+        id: 'hulaoguan', hero: '吕布', name: '虎牢关', pack: 'sanguo', enemyPack: 'sanguo', boost: 1.12,
+        desc: '虎牢关前，吕布一人一骑。敌方也是三国阵容，开局送 3 级吕布。',
+        first: { stone: 4, seal: 3 }, repeat: { stone: 2, seal: 1 },
+      },
+      {
+        id: 'huaguoshan', hero: '悟空', name: '花果山', pack: 'xiyou', enemyPack: 'xiyou', boost: 1.16,
+        desc: '花果山被围，悟空率猴兵迎战。敌方西游阵容，开局送 3 级悟空。',
+        first: { stone: 4, seal: 3 }, repeat: { stone: 2, seal: 1 },
+      },
+      {
+        id: 'zhuxianzhen', hero: '岳飞', name: '朱仙镇', pack: 'song', enemyPack: 'tang', boost: 1.2,
+        desc: '朱仙镇外，岳家军背水一战。敌方唐朝重甲，开局送 3 级岳飞。',
+        first: { stone: 4, seal: 3 }, repeat: { stone: 2, seal: 1 },
+      },
+    ],
+    tasks: [
+      { id: 'lvbu_ult', hero: '吕布', kind: 'ult', need: 2, name: '无双试炼', desc: '在活动关卡中，吕布释放 2 次大招', reward: { stone: 4, seal: 2 } },
+      { id: 'lvbu_kill', hero: '吕布', kind: 'heroKill', need: 20, name: '辕门射戟', desc: '吕布在活动关卡中击杀 20 名敌人', reward: { stone: 4, seal: 1 } },
+      { id: 'wukong_ult', hero: '悟空', kind: 'ult', need: 2, name: '大圣神威', desc: '在活动关卡中，悟空释放 2 次大招', reward: { stone: 4, seal: 2 } },
+      { id: 'wukong_kill', hero: '悟空', kind: 'heroKill', need: 20, name: '棒打天兵', desc: '悟空在活动关卡中击杀 20 名敌人', reward: { stone: 4, seal: 1 } },
+      { id: 'yuefei_ult', hero: '岳飞', kind: 'ult', need: 2, name: '还我河山', desc: '在活动关卡中，岳飞释放 2 次大招', reward: { stone: 4, seal: 2 } },
+      { id: 'yuefei_kill', hero: '岳飞', kind: 'heroKill', need: 20, name: '精忠破阵', desc: '岳飞在活动关卡中击杀 20 名敌人', reward: { stone: 4, seal: 1 } },
+    ],
+  };
+  JQ.BREAKTHROUGH.byHero = {};
+  for (const name of JQ.BREAKTHROUGH.heroes) {
+    const b = BRK_HERO[name];
+    if (b) JQ.BREAKTHROUGH.byHero[name] = b;
+  }
+  JQ.BREAKTHROUGH.stageById = {};
+  for (const s of JQ.BREAKTHROUGH.stages) JQ.BREAKTHROUGH.stageById[s.id] = s;
+  JQ.breakthroughStage = (id) => JQ.BREAKTHROUGH.stageById[id] || null;
+  JQ.brkCost = (name, level) => {
+    const b = JQ.BREAKTHROUGH.byHero[name];
+    if (!b || level < 0 || level >= 3) return null;
+    return JQ.BREAKTHROUGH.costs[level];
+  };
+  // 纯函数：返回某位英雄在 brk 级突破后的战斗定义（不修改原始 HEROES）
+  JQ.heroAtBrk = function (name, brk) {
+    const base = HEROES[name];
+    const b = JQ.BREAKTHROUGH.byHero[name];
+    brk = Math.max(0, Math.min(3, Math.floor(brk || 0)));
+    if (!base || !b || !brk) return base;
+    const def = Object.assign({}, base, { brk });
+    def.passive = Object.assign({}, base.passive);
+    def.skill = Object.assign({}, base.skill, { do: (base.skill.do || []).map((e) => Object.assign({}, e)) });
+    def.ult = Object.assign({}, base.ult, { do: (base.ult.do || []).map((e) => Object.assign({}, e)) });
+    let hp = 1, atk = 1;
+    for (let i = 0; i < brk; i++) {
+      const L = b.levels[i];
+      if (!L) continue;
+      if (L.stat) (hp *= L.stat.hp || 1), (atk *= L.stat.atk || 1);
+      if (L.skillAdd) def.skill.do.push(...L.skillAdd.map((e) => Object.assign({}, e)));
+      if (L.skillPatch) {
+        if (L.skillPatch.desc) def.skill.desc = L.skillPatch.desc;
+        if (L.skillPatch.doStun) for (const e of def.skill.do) if (e.t === 'aoe' && e.stun != null) e.stun = L.skillPatch.doStun;
+      }
+      if (L.skillNote) def.skill.desc = (def.skill.desc || '') + '；' + L.skillNote;
+      if (L.ult) def.ult = Object.assign({}, L.ult, { do: (L.ult.do || []).map((e) => Object.assign({}, e)) });
+      if (L.exclusive) {
+        Object.assign(def.passive, L.exclusive.add || {});
+        def.passiveExtra = { name: L.exclusive.name, desc: L.exclusive.desc };
+        def.passive.desc = (base.passive.desc || '') + '；' + L.exclusive.desc;
+      }
+    }
+    def.hp = Math.round(base.hp * hp * 10) / 10;
+    def.atk = Math.round(base.atk * atk * 10) / 10;
+    return def;
+  };
+
   // 卡包：决定招兵能抽到哪些字、能合哪些英雄、能抽到哪些小兵
   JQ.PACKS = {
     sanguo: { name: '三国', open: true },
@@ -536,6 +703,11 @@
       name: '无限',
       desc: '没有对手棋盘，敌军一波比一波强，每 4 波来一位敌将，看你能守几波',
       rules: { waves: true, time: Infinity },
+    },
+    breakthrough: {
+      name: '突破',
+      desc: '突破活动关卡：固定卡包、开局送 3 级活动英雄，赢取破阵石与将印',
+      rules: { time: 240, startBuns: 35, startHero: true },
     },
   };
 

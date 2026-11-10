@@ -328,6 +328,183 @@
     g.drawImage(s.c, x - (s.w * k) / 2, y - (s.h * k) / 2, s.w * k, s.h * k);
   }
 
+  // ---------- 突破字饰 ----------
+  // l0veyou 生成、chroma key 抠好的透明素材；x/y 是英雄两个字的中心，size 约等于两字总宽。
+  // behind=true 的（岳飞战旗）要在汉字之前画，其余在汉字之后画。
+  const ORN = {
+    吕布: [{ file: 'orn_lvbu', w: 1.95, dx: 0, dy: -0.58, behind: true, kind: 'feather' }],
+    悟空: [
+      { file: 'orn_wukong_band', w: 1.72, dx: 0, dy: -0.34, behind: true, kind: 'band' },
+      { file: 'orn_wukong_cloud', w: 1.95, dx: 0, dy: 0.5, behind: true, kind: 'cloud' },
+    ],
+    岳飞: [{ file: 'orn_yuefei_flag', w: 2.15, dx: 0.06, dy: -0.08, behind: true, kind: 'flag', alpha: 0.96 }],
+  };
+  const ornImgs = {};
+  function loadOrn(file) {
+    if (!ornImgs[file]) {
+      const im = new Image();
+      im.src = `img/${file}.webp?v=20261110h`;
+      ornImgs[file] = im;
+    }
+    return ornImgs[file];
+  }
+  JQ.preloadOrnaments = function () {
+    for (const list of Object.values(ORN)) for (const o of list) loadOrn(o.file);
+  };
+  JQ.ornamentName = (hero) => {
+    const b = JQ.BREAKTHROUGH && JQ.BREAKTHROUGH.byHero[hero];
+    return b ? b.ornName : '';
+  };
+  // 素材还没加载时用代码画一个简笔版本，保证字饰不会整块消失
+  function fallbackOrn(g, o, x, y, size, tier) {
+    g.save();
+    g.lineCap = 'round';
+    if (o.kind === 'feather') {
+      for (const s of [-1, 1]) {
+        g.strokeStyle = '#c33a1a';
+        g.lineWidth = Math.max(3, size * 0.055);
+        g.beginPath();
+        g.moveTo(x, y + size * 0.34);
+        g.quadraticCurveTo(x + s * size * 0.5, y - size * 0.38, x + s * size * 0.82, y - size * 1.24);
+        g.stroke();
+        g.strokeStyle = '#e8b64a';
+        g.lineWidth = Math.max(1.2, size * 0.018);
+        g.stroke();
+      }
+    } else if (o.kind === 'band') {
+      g.strokeStyle = '#e8b64a';
+      g.lineWidth = Math.max(4, size * 0.07);
+      g.beginPath();
+      g.arc(x, y - size * 0.16, size * 0.48, Math.PI * 1.08, Math.PI * 1.92);
+      g.stroke();
+      g.strokeStyle = '#fff0b0';
+      g.lineWidth = Math.max(1, size * 0.018);
+      g.stroke();
+    } else if (o.kind === 'cloud') {
+      g.fillStyle = 'rgba(255,246,220,0.9)';
+      g.strokeStyle = '#d8a84a';
+      g.lineWidth = Math.max(1, size * 0.015);
+      for (const [dx, dy, r] of [[-0.32, 0.5, 0.2], [0, 0.45, 0.26], [0.32, 0.5, 0.18]]) {
+        g.beginPath();
+        g.ellipse(x + size * dx, y + size * dy, size * r, size * r * 0.62, 0, 0, Math.PI * 2);
+        g.fill();
+        g.stroke();
+      }
+    } else if (o.kind === 'flag') {
+      g.strokeStyle = '#4a2c18';
+      g.lineWidth = Math.max(3, size * 0.04);
+      g.beginPath();
+      g.moveTo(x - size * 0.55, y + size * 0.75);
+      g.lineTo(x + size * 0.2, y - size * 0.9);
+      g.stroke();
+      g.fillStyle = 'rgba(180,30,20,0.85)';
+      g.beginPath();
+      g.moveTo(x + size * 0.18, y - size * 0.88);
+      g.lineTo(x + size * 0.9, y - size * 0.58);
+      g.lineTo(x + size * 0.52, y - size * 0.16);
+      g.closePath();
+      g.fill();
+    }
+    g.restore();
+  }
+  // tier：0=未突破（preview 时画半透明），1~3 突
+  JQ.drawOrnament = function (g, hero, x, y, size, opts) {
+    opts = opts || {};
+    const list = ORN[hero];
+    if (!list || !size) return false;
+    const tier = Math.max(0, Math.min(3, opts.tier || 0));
+    if (!tier && !opts.preview) return false;
+    const behind = !!opts.behind;
+    let drew = false;
+    for (const o of list) {
+      if (!!o.behind !== behind) continue;
+      const im = loadOrn(o.file);
+      const k = (opts.scale || 1) * (1 + 0.025 * Math.max(0, tier - 1));
+      const w = size * o.w * k;
+      const cx = x + size * o.dx;
+      const cy = y + size * (o.dy + (opts.dy || 0));
+      const alpha = (opts.alpha == null ? 1 : opts.alpha) * (o.alpha == null ? 1 : o.alpha) * (tier ? 1 : 0.32);
+      g.save();
+      g.globalAlpha *= alpha;
+      if (tier >= 2) {
+        g.shadowColor = 'rgba(255,207,90,0.9)';
+        g.shadowBlur = 8 + tier * 4;
+      }
+      if (im.complete && im.naturalWidth) {
+        const h = (w * im.naturalHeight) / im.naturalWidth;
+        g.drawImage(im, cx - w / 2, cy - h / 2, w, h);
+        drew = true;
+      } else if (tier || opts.preview) {
+        fallbackOrn(g, o, cx, cy, size * 0.9, tier);
+        drew = true;
+      }
+      g.restore();
+    }
+    return drew;
+  };
+  // 英雄单位身上的字饰：战旗先画、翎羽/金箍/云后画
+  JQ.drawUnitOrnament = function (g, u, x, y, size, behind) {
+    if (!u || !u.isHero || u.clone) return;
+    const tier = u.brk || 0;
+    if (tier <= 0) return;
+    JQ.drawOrnament(g, u.key, x, y, size, { tier, behind, scale: 1 });
+  };
+
+  // ---------- 界面图标 / 活动英雄立绘 ----------
+  const extraImgs = {};
+  function loadExtra(file) {
+    if (!extraImgs[file]) {
+      const im = new Image();
+      im.src = `img/${file}.webp?v=20261110h`;
+      extraImgs[file] = im;
+    }
+    return extraImgs[file];
+  }
+  function drawExtra(g, file, x, y, w, h, alpha) {
+    const im = loadExtra(file);
+    if (!(im.complete && im.naturalWidth)) return false;
+    g.save();
+    if (alpha != null) g.globalAlpha *= alpha;
+    g.drawImage(im, x, y, w, h);
+    g.restore();
+    return true;
+  }
+  JQ.iconDraw = (g, id, x, y, w, h, alpha) => drawExtra(g, 'ic_' + id, x, y, w, h, alpha);
+  const PORTRAIT_OF = { 吕布: 'lvbu', 悟空: 'wukong', 岳飞: 'yuefei' };
+  JQ.portraitOf = (hero) => PORTRAIT_OF[hero] || null;
+  // 立绘按 cover 裁切，不拉伸
+  JQ.portraitDraw = function (g, hero, x, y, w, h, opts) {
+    const id = PORTRAIT_OF[hero];
+    if (!id) return false;
+    const im = loadExtra('hero_' + id);
+    if (!(im.complete && im.naturalWidth)) return false;
+    const ir = im.naturalWidth / im.naturalHeight, br = w / h;
+    let sx = 0, sy = 0, sw = im.naturalWidth, sh = im.naturalHeight;
+    if (ir > br) (sw = im.naturalHeight * br), (sx = (im.naturalWidth - sw) / 2);
+    else (sh = im.naturalWidth / br), (sy = (im.naturalHeight - sh) * 0.3);
+    g.save();
+    if (opts && opts.round) {
+      const r = opts.round;
+      JQ.rr(g, x, y, w, h, r);
+      g.clip();
+    }
+    if (opts && opts.alpha != null) g.globalAlpha *= opts.alpha;
+    g.drawImage(im, sx, sy, sw, sh, x, y, w, h);
+    g.restore();
+    return true;
+  };
+  JQ.preloadUiArt = function () {
+    for (const id of ['mainhero', 'breakthrough', 'stage', 'task', 'stone', 'seal']) loadExtra('ic_' + id);
+    for (const id of Object.values(PORTRAIT_OF)) loadExtra('hero_' + id);
+    for (const id of ['warrior', 'tank', 'assassin', 'mage', 'archer', 'support', 'commander', 'special']) loadExtra('role_' + id);
+  };
+  // 兵种/职业小图标：先找生成图标，再退回 code 绘制
+  const ROLE_ICON = { 战士: 'warrior', 坦克: 'tank', 刺客: 'assassin', 法师: 'mage', 射手: 'archer', 辅助: 'support', 统帅: 'commander', 特殊: 'special' };
+  JQ.roleIconDraw = function (g, role, x, y, s) {
+    const id = ROLE_ICON[role] || (['warrior', 'tank', 'assassin', 'mage', 'archer', 'support', 'commander', 'special'].includes(role) ? role : null);
+    return id ? drawExtra(g, 'role_' + id, x, y, s, s) : false;
+  };
+
   // ---------- 背景 ----------
   // 画面样式（设置里可换）：unit = glyph 汉字（默认）/ piece 象棋子；bg = paper 宣纸（默认）/ field 水墨战场
   const STYLE = { unit: 'glyph', bg: 'paper' };
@@ -807,7 +984,6 @@
       g.stroke();
       g.restore();
     }
-
     const popOf = (x) => {
       if (sid !== 0) return null;
       for (const a of view.anims) if (a.kind === 'pop' && a.r === x.r && a.c === x.c && now - a.t0 < 320) return { k: (now - a.t0) / 320, how: a.how };
@@ -868,6 +1044,7 @@
         g.restore();
       }
     }
+    // 字饰全部画在卡片之前（ORT 的 behind=true），这里不再重复叠一层
 
     // 英雄名牌与状态
     for (const link of b.links) {
@@ -883,6 +1060,21 @@
       rr(g, mx - tw / 2, A.y + A.h - 15, tw, 15, 7);
       g.fill();
       text(g, label, mx, A.y + A.h - 7, 12, alive ? '#fff' : cd > 0 ? '#ccc' : '#ffe9a0');
+      // 字饰小徽记：放在英雄名牌右边，不盖住两个字
+      const tier = sid === 0 && game.breakthrough ? game.breakthrough[link.hero] || 0 : 0;
+      if (tier > 0) {
+        const bx = mx + tw / 2 + 2, by = A.y + A.h - 29;
+        g.save();
+        g.beginPath();
+        g.arc(bx + 12, by + 12, 12, 0, TAU);
+        g.fillStyle = 'rgba(20,12,8,0.78)';
+        g.fill();
+        g.strokeStyle = 'rgba(240,200,120,0.85)';
+        g.lineWidth = 1;
+        g.stroke();
+        g.restore();
+        JQ.drawOrnament(g, link.hero, bx + 12, by + 12, 8, { tier, behind: true });
+      }
       levelBadge(g, link.level, B.x + B.w - 9, A.y + 9, 8);
       if (link.level >= game.R.ultLevel) text(g, '大招', mx, A.y + 8, 11, '#ffd23f', { stroke: '#7a1010', strokeW: 3 });
       g.restore();
@@ -1177,8 +1369,11 @@
         g.arc(x, y, 30, 0, TAU);
         g.fill();
       }
+      // 字饰：战旗在字后面，翎羽/金箍/云在字上面
+      JQ.drawUnitOrnament(g, u, x, y, 44, true);
       // 贴图自带缩放，不用 save/translate/scale/restore
       drawGlyph(g, u.key, x, y, 38, INK[sid], sid === 0 ? 'rgba(255,255,255,0.85)' : 'rgba(255,225,215,0.85)', 6, pop);
+      JQ.drawUnitOrnament(g, u, x, y, 44, false);
       if (u.flash > 0) {
         g.globalAlpha = baseA * (u.flash / 0.12);
         drawGlyph(g, u.key, x, y, 38, '#fff', null, 0, pop);
@@ -1288,7 +1483,9 @@
         g.arc(x, y, 30, 0, TAU);
         g.fill();
       }
+      JQ.drawUnitOrnament(g, u, x, y, 46, true);
       drawPiece(g, u, x, y, pop, sid, false);
+      JQ.drawUnitOrnament(g, u, x, y, 46, false);
       g.globalAlpha = baseA;
       const w = 62, hp = Math.max(0, u.hp / u.maxHp);
       g.fillStyle = '#1a1a1a';
@@ -1908,8 +2105,9 @@
     g.strokeStyle = 'rgba(255,220,150,0.35)';
     g.lineWidth = 1.5;
     g.stroke();
-    text(g, game.R.waves ? `第 ${game.wave} 波` : `第 ${game.stage} 关`, 66, 25, 19, '#ffe9a0', { align: 'left', stroke: '#2a1a08', strokeW: 4 });
-    text(g, game.mode.name + ' · ' + game.diff.name, 66, 40, 10, '#d8c8a0', { align: 'left', font: 'sans-serif', bold: false });
+    const act = game.modeKey === 'breakthrough' ? JQ.breakthroughStage(game.activity) : null;
+    text(g, act ? act.name : game.R.waves ? `第 ${game.wave} 波` : `第 ${game.stage} 关`, 66, 25, 19, '#ffe9a0', { align: 'left', stroke: '#2a1a08', strokeW: 4 });
+    text(g, act ? `突破活动 · ${act.hero}` : game.mode.name + ' · ' + game.diff.name, 66, 40, 10, '#d8c8a0', { align: 'left', font: 'sans-serif', bold: false });
     if (game.R.events) {
       // 下次天命倒计时：小圆环
       const k = 1 - game.eventT / 25;

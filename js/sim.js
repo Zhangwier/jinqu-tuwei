@@ -83,7 +83,7 @@
       this.incomeMult = T.income;
       this.heroAlive = {};
       this.heroCd = {};
-      this.stats = { summoned: 0, kills: 0, baseDmg: 0, heroes: 0, ults: 0, dmg: {}, heroKills: {}, heroLv: {} };
+      this.stats = { summoned: 0, kills: 0, baseDmg: 0, heroes: 0, ults: 0, dmg: {}, heroKills: {}, heroLv: {}, heroUlts: {} };
       this.bonds = []; // 当前生效的羁绊 [{ bond, tier, n }]
       this.bondKey = '';
       this.bondMods = { hero: {}, unitAtk: 0, unitHp: 0, buns: [] };
@@ -132,6 +132,15 @@
       this.stage = Math.max(1, Math.min(C.MAX_STAGE, opts.stage || 1));
       this.skillToast = opts.skillToast !== false;
       this.mainHero = opts.mainHero || null; // 玩家本命将 { name, lv }：每级攻击/血量 +3%，只给玩家方
+      this.activity = opts.activity || null; // 突破活动关卡 id
+      this.startHeroName = opts.startHeroName || null; // 活动关：玩家开局固定送这位英雄
+      this.startHeroLv = Math.max(1, opts.startHeroLv || 1);
+      // 玩家突破等级：只影响玩家方英雄，敌人始终用原始定义
+      this.breakthrough = opts.breakthrough || null;
+      this.brkDefs = {};
+      for (const [name, lv] of Object.entries(opts.breakthrough || {})) {
+        if (JQ.BREAKTHROUGH.byHero[name] && lv > 0) this.brkDefs[name] = JQ.heroAtBrk(name, Math.min(3, lv));
+      }
       // 卡包：玩家自选，对手默认随机一个已开放的；自定义包没配好不能进
       const usable = (p) => !!(JQ.PACKS[p] && JQ.PACKS[p].open && (p !== 'custom' || JQ.customReady()));
       const open = JQ.OPEN_PACKS.filter(usable);
@@ -160,6 +169,11 @@
         for (const s of this.sides) {
           const names = JQ.PACKS[s.pack].heroes.slice();
           const pickName = () => {
+            // 活动关：玩家开局固定送本期英雄，等级由 startHeroLv 决定
+            if (s.id === 0 && this.startHeroName && names.includes(this.startHeroName)) {
+              names.splice(names.indexOf(this.startHeroName), 1);
+              return this.startHeroName;
+            }
             // 天命开局：玩家的本命将在卡包里就先送他
             const mh = this.mainHero;
             if (s.id === 0 && mh && names.includes(mh.name)) {
@@ -180,9 +194,11 @@
           for (let i = 0; i < 1 + s.T.extraHero && i < spots.length; i++) {
             const h = HEROES[pickName()];
             const [r, c] = spots[i];
+            // 活动关固定送 3 级：两位字卡都摆 3 级，合成后英雄就是 3 级（大招已解锁）
+            const lv = s.id === 0 ? this.startHeroLv : 1;
             s.board.cell(r, c + 1).unlocked = true;
-            s.board.place(JQ.makeCard('char', h.chars[0]), r, c);
-            s.board.place(JQ.makeCard('char', h.chars[1]), r, c + 1);
+            s.board.place(JQ.makeCard('char', h.chars[0], lv), r, c);
+            s.board.place(JQ.makeCard('char', h.chars[1], lv), r, c + 1);
           }
         }
       }
@@ -760,7 +776,8 @@
 
     // extra.clone=true 时是悟空分身：不占英雄位、不放技能、到时消失
     spawnHero(s, name, level, x, extra) {
-      const d = HEROES[name];
+      // 玩家方用突破后的定义（技能/大招/被动/属性），敌人始终用原始定义
+      const d = (s.id === 0 && this.brkDefs[name]) || HEROES[name];
       const m = JQ.heroLevelMult(level);
       const P = d.passive || {};
       const stage = s.T.stageBoost || 1;
@@ -769,9 +786,9 @@
         x, y: this.spawnY(s.id) - (s.id === 0 ? 10 : -10),
         hp: d.hp * m * s.T.heroHp * stage, maxHp: d.hp * m * s.T.heroHp * stage, atk: d.atk * m * (P.atkMult || 1) * (s.T.heroAtk || 1) * s.T.allAtk * stage, range: d.range + (s.T.heroRange || 0), rate: d.rate, speed: d.speed, ultCdMult: s.T.ultCd,
         ranged: !!d.ranged, magic: !!d.magic, assassin: !!d.assassin, proj: d.proj || null, passive: P,
-        lifesteal: P.lifesteal || 0, bonus: null, rangedReduce: P.rangedReduce || 0,
+        def: d, brk: d.brk || 0, lifesteal: P.lifesteal || 0, bonus: null, rangedReduce: P.rangedReduce || 0,
         r: 24, atkT: 0.5, retarget: 0, target: null, stun: 0, shield: 0, anim: 0, flash: 0, born: this.time, kx: 0, ky: 0,
-        skillT: d.skill.cd * 0.5, ultT: d.ult.cd * 0.4, incomeT: 0, shieldT: 0,
+        skillT: d.skill.cd * 0.5, ultT: d.ult.cd * 0.4, incomeT: 0, shieldT: 0, rampageStacks: 0,
       };
       if (P.stealth) u.stealthUntil = this.time + P.stealth;
       const mh = this.mainHero;
@@ -1125,6 +1142,7 @@
         if (SP.heroBonus && t.isHero) mult *= 1 + SP.heroBonus;
         if (SP.longShot && Math.hypot(t.x - src.x, t.y - src.y) > 160) mult *= 1 + SP.longShot;
         if (SP.rage) mult *= 1 + SP.rage * (1 - src.hp / src.maxHp);
+        if (SP.rampage && src.isHero) mult *= 1 + SP.rampage.pct * (src.rampageStacks || 0);
       }
       if (t.drUntil > this.time) mult *= 1 - t.dr;
       if (TP.dr) mult *= 1 - TP.dr;
@@ -1200,6 +1218,13 @@
       killer.stats.kills++;
       if (src && src.key && src.side === killer.id) killer.stats.heroKills[src.key] = (killer.stats.heroKills[src.key] || 0) + 1;
       killer.buns += (t.isHero && !t.clone ? C.HERO_KILL_BUNS : C.KILL_BUNS) + (killer.T.killBuns || 0);
+      // 吕布三突「无双·极」：击杀叠攻击并回血
+      if (src && src.hp > 0 && src.isHero && !src.clone && src.passive && src.passive.rampage) {
+        const rp = src.passive.rampage;
+        src.rampageStacks = Math.min(rp.max || 6, (src.rampageStacks || 0) + 1);
+        if (rp.heal) this.heal(src, src.maxHp * rp.heal);
+        this.addFx({ kind: 'text', x: src.x, y: src.y - 52, text: `无双 +${src.rampageStacks}`, color: '#ffcf5a', life: 0.7, size: 14 });
+      }
       this.addFx({ kind: 'ink', x: t.x, y: t.y, life: 0.9, side: t.side, big: t.isHero, text: t.key });
       this.emit('kill', { side: killer.id, x: t.x, y: t.y, hero: t.isHero && !t.clone });
       if (t.isHero && !t.clone) this.hitstop = Math.max(this.hitstop, 0.14);
@@ -1210,6 +1235,18 @@
       if (t.isHero && !t.clone) {
         if (owner.heroAlive[t.key] === t) delete owner.heroAlive[t.key];
         owner.heroCd[t.key] = Math.max(owner.heroCd[t.key] || 0, HEROES[t.key].cd * 0.6 * owner.cdMult() * (owner.T.heroRespawn || 1));
+        // 岳飞三突「精忠报国」：阵亡时给周围友军加攻和护盾
+        const dw = t.passive && t.passive.deathWarcry;
+        if (dw) {
+          for (const a of this.units) {
+            if (a.side !== t.side || a.hp <= 0 || a.isOutpost || Math.hypot(a.x - t.x, a.y - t.y) > (dw.r || 320)) continue;
+            a.atkBuff = Math.max(a.atkBuffUntil > this.time ? a.atkBuff : 1, dw.atk || 1.3);
+            a.atkBuffUntil = this.time + (dw.dur || 6);
+            if (dw.shield) a.shield += a.maxHp * dw.shield;
+          }
+          this.addFx({ kind: 'banner', x: C.W / 2, y: t.side === 0 ? 700 : 470, text: '精忠报国', hero: t.key, color: '#ff4030', side: t.side, life: 1.6 });
+          this.addFx({ kind: 'shock', x: t.x, y: t.y, r: dw.r || 320, color: '#ff4030', life: 0.8 });
+        }
         this.addFx({ kind: 'burst', x: t.x, y: t.y, color: HEROES[t.key].aura, n: 30, life: 1, speed: 200 });
         this.emit('heroDie', { side: t.side, name: t.key });
       }
@@ -1358,7 +1395,9 @@
     }
 
     castUlt(u, d) {
-      this.sides[u.side].stats.ults++;
+      const st = this.sides[u.side].stats;
+      st.ults++;
+      st.heroUlts[u.key] = (st.heroUlts[u.key] || 0) + 1;
       u.ultT = d.ult.cd * (u.ultCdMult || 1) * (u.bondCd || 1);
       u.anim = 0.4;
       this.shake = Math.max(this.shake, 8);
@@ -1370,7 +1409,7 @@
     }
 
     stepSkill(u, dt, foes) {
-      const d = HEROES[u.key];
+      const d = u.def || HEROES[u.key];
       const live = foes.filter((f) => f.hp > 0);
       // 大招：英雄到规定等级解锁
       if (u.level >= this.R.ultLevel) {

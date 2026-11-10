@@ -78,6 +78,20 @@
       const [x, y] = cr(1, 4);
       drag(sr(0), [x, y + 46], 'touch');
       check(B.cell(1, 4).card && B.cell(1, 4).card.key === '枪', '触屏落点抬高');
+      // 突破活动：材料、突破、活动关
+      j.openActivity();
+      check(j.screen === 'activity', '活动页打开');
+      j.giveMats(20, 10);
+      const b0 = j.brkOf('吕布'), r0 = j.brkUp('吕布');
+      check(r0.ok && j.brkOf('吕布') === b0 + 1, '材料足够时突破成功');
+      check(j.prog.act.stone === 18 && j.prog.act.seal['吕布'] === 9, '突破扣除材料');
+      j.giveMats(0, 99);
+      while (j.brkOf('吕布') < 3 && j.brkUp('吕布').ok);
+      check(j.brkOf('吕布') === 3, '三次突破上限');
+      j.startActivityStage('hulaoguan');
+      check(j.game.modeKey === 'breakthrough' && j.game.activity === 'hulaoguan', '活动关模式');
+      check(j.game.sides[0].board.links.some((l) => l.hero === '吕布' && l.level === 3), '活动关送 3 级吕布');
+      check(j.game.brkDefs['吕布'] && j.game.brkDefs['吕布'].ult.name === '神鬼乱舞', '突破定义进入战斗');
     } catch (e) {
       fails.push('异常 ' + e.message);
       out.push(e.stack);
