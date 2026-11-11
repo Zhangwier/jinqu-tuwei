@@ -3626,7 +3626,7 @@
     v.preload = 'auto';
     v.addEventListener('canplay', () => (qxVideoOk = true));
     v.addEventListener('error', () => (qxVideoOk = false));
-    v.src = 'img/qx_reveal.mp4?v=20261111g';
+    v.src = 'img/qx_reveal.mp4?v=20261111h';
     qxVideo = v;
     return v;
   }

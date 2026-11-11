@@ -346,7 +346,7 @@
   function loadOrn(file) {
     if (!ornImgs[file]) {
       const im = new Image();
-      im.src = `img/${file}.webp?v=20261111g`;
+      im.src = `img/${file}.webp?v=20261111h`;
       ornImgs[file] = im;
     }
     return ornImgs[file];
@@ -458,7 +458,7 @@
   function loadExtra(file) {
     if (!extraImgs[file]) {
       const im = new Image();
-      im.src = `img/${file}.webp?v=20261111g`;
+      im.src = `img/${file}.webp?v=20261111h`;
       extraImgs[file] = im;
     }
     return extraImgs[file];
