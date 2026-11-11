@@ -3488,7 +3488,7 @@
     v.preload = 'auto';
     v.addEventListener('canplay', () => (qxVideoOk = true));
     v.addEventListener('error', () => (qxVideoOk = false));
-    v.src = 'img/qx_reveal.mp4?v=20261111b';
+    v.src = 'img/qx_reveal.mp4?v=20261111c';
     qxVideo = v;
     return v;
   }
@@ -4053,6 +4053,8 @@
     }
     requestAnimationFrame(frame);
   }
+  // 首屏就会用到的小图先下载（图标集、大厅侧边入口、求贤令），免得先闪一下文字占位
+  for (const f of ['icons', 'ic_breakthrough', 'ic_stage', 'ic_token', 'lobby_bg']) JQ.preloadArt(f);
   requestAnimationFrame(frame);
 
   // 调试：?screen=custom/stages/testlab/paused 直接打开对应界面（截图用）
