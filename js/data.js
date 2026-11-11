@@ -24,8 +24,8 @@
     MAX_LEVEL: 5,           // 英雄/建筑/道具等级上限；小兵不设上限（见 JQ.cardMaxLevel）
     ULT_LEVEL: 3,           // 英雄到这个等级解锁大招
     WALK_TIME: 0.42,        // 主角走一格的秒数
-    CAP_PER_LEVEL: 4,       // 每级兵卡提供的同兵种在场上限
-    CAP_MAX: 30,
+    CAP_PER_LEVEL: 5,       // 每级兵卡提供的同兵种在场上限（召唤数量调高后从 4 提到 5）
+    CAP_MAX: 36,
     KILL_BUNS: 1,
     HERO_KILL_BUNS: 10,
     BASE_DMG: 0.25,         // 打基地伤害系数
@@ -937,9 +937,13 @@
     { name: '招贤纳士', desc: '招兵免费', dur: 15, icon: '贤', color: '#ffcf5a' },
   ];
 
-  JQ.levelMult = (lv) => 1 + 0.35 * (lv - 1);
-  JQ.heroLevelMult = (lv) => 1 + 0.3 * (lv - 1);
-  JQ.unitCount = (lv) => (lv >= 5 ? 4 : [1, 1, 2, 2][lv - 1] || 1); // 5 级起每次召 4 个，作为合卡门槛
+  // 2026-11-11 用户定：每次召唤数量 1/2/3/4/6（5 级起 6 个）。个体成长随之从每级 +35% 降到 +20%，
+  // 整张卡的战力（数量×个体）仍逐级上升：1 / 2.4 / 4.2 / 6.4 / 10.8 / 12 …（旧版 1 / 1.35 / 3.4 / 4.1 / 9.6 / 11）
+  JQ.levelMult = (lv) => 1 + 0.2 * (lv - 1);
+  JQ.heroLevelMult = (lv) => 1 + 0.35 * (lv - 1);
+  JQ.HERO_POWER = 1.25; // 英雄整体加强：生命/攻击 ×1.25（小兵数量变多后英雄要跟上）
+  JQ.unitCount = (lv) => (lv >= 5 ? 6 : [1, 2, 3, 4][lv - 1] || 1);
+  JQ.heroCap = (lv) => Math.max(1, Math.min(C.MAX_LEVEL, lv)); // 同名英雄在场上限 = 英雄等级（冷却好了可以再召）
   // 等级配色：1 灰、2 绿、3 蓝、4 紫、5 金
   JQ.LEVEL_COLORS = ['#888', '#8c8c8c', '#2fa84f', '#2a7be0', '#9a3ee0', '#f0a020'];
 

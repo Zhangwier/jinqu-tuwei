@@ -729,18 +729,23 @@
       }
     }
 
+    // 英雄像兵卡一样：冷却好了主角再踩就再召一个（前一个还活着也行）；同名英雄在场上限 = 英雄等级
     tryHero(s, link) {
-      const alive = s.heroAlive[link.hero];
       const [A, B] = link.cells.map((x) => JQ.cellRect(s.id, x.r, x.c));
       const cx = (A.cx + B.cx) / 2, cy = (A.cy + B.cy) / 2;
-      if (alive) {
-        if (link.level > alive.level) this.upgradeHero(alive, link.level);
-        return;
-      }
+      const alive = this.heroCount(s, link.hero);
+      for (const u of this.units) if (u.side === s.id && u.isHero && !u.clone && u.key === link.hero && u.hp > 0 && link.level > u.level) this.upgradeHero(u, link.level);
+      if (alive >= JQ.heroCap(link.level)) return;
       if ((s.heroCd[link.hero] || 0) > 0) return;
       this.spawnHero(s, link.hero, link.level, cx, link.cells[0].forward ? { y: cy + (s.id === 0 ? -18 : 18) } : null);
       s.heroCd[link.hero] = HEROES[link.hero].cd * s.cdMult();
       this.addFx({ kind: 'pulse', x: cx, y: cy, life: 0.6, side: s.id, size: C.CELL, color: HEROES[link.hero].aura });
+    }
+
+    heroCount(s, name) {
+      let n = 0;
+      for (const u of this.units) if (u.side === s.id && u.isHero && !u.clone && u.key === name && u.hp > 0) n++;
+      return n;
     }
 
     spawnY(side) {
@@ -783,7 +788,7 @@
     spawnHero(s, name, level, x, extra) {
       // 玩家方用突破后的定义（技能/大招/被动/属性），敌人始终用原始定义
       const d = (s.id === 0 && this.brkDefs[name]) || HEROES[name];
-      const m = JQ.heroLevelMult(level);
+      const m = JQ.heroLevelMult(level) * JQ.HERO_POWER;
       const P = d.passive || {};
       const stage = s.T.stageBoost || 1;
       const u = {
@@ -1687,10 +1692,11 @@
       const e = this.sides[1];
       this.waveT = Math.max(12, 20 - n * 0.3); // 越往后来得越快
       const keys = JQ.packUnits(e.pack);
-      const count = Math.round((3 + n * 1.6) * (this.diff.wave || 1));
+      // 2026-11-11 召唤数量调高后：敌军数量 ×1.4，个体属性按旧成长曲线补回（1+0.35/级）
+      const count = Math.round((3 + n * 1.6) * 1.4 * (this.diff.wave || 1));
       const lv = Math.min(C.MAX_LEVEL, 1 + Math.floor(n / 3));
       // 我方兵力会持续积累，敌军属性也随波次成长（第 8 波起每波 +7%）
-      const grow = 1 + 0.07 * Math.max(0, n - 8);
+      const grow = (1 + 0.07 * Math.max(0, n - 8)) * ((1 + 0.35 * (lv - 1)) / JQ.levelMult(lv));
       for (let i = 0; i < count; i++) {
         const x = L.BX0 + 20 + this.rand() * (L.BX1 - L.BX0 - 40);
         const u = this.spawnUnit(e, keys[Math.floor(this.rand() * keys.length)], lv, x);

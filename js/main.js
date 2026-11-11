@@ -151,6 +151,7 @@
     else if (kind === 'bad') tone(160, 0.12, 'square', 0.05);
     else if (kind === 'sell') (pluck(1175, 0.15, 0.07), pluck(1568, 0.2, 0.06, 0.06));
     else if (kind === 'tap') pluck(1046, 0.08, 0.04);
+    else if (kind === 'press') (pluck(784, 0.05, 0.05), drum(220, 0.04, 0.05));
   }
   // 手机震动（安卓有效，iOS 忽略）
   const buzz = (ms) => {
@@ -839,11 +840,31 @@
   let buttons = [];
   // 按钮按下反馈：点到的按钮缩到 0.93 再弹回（约 160ms）
   let pressed = null;
+  // 按钮手感：按住时压到 0.9（60ms 内压下），松手后回弹到 1.06 再收回
   function pressK(x, y) {
     if (!pressed || pressed.x !== x || pressed.y !== y) return 1;
-    const k = (performance.now() - pressed.t) / 160;
+    const t = performance.now() - pressed.t;
+    if (pressed.held) return 1 - 0.1 * Math.min(1, t / 60);
+    const k = t / 260;
     if (k >= 1) return 1;
-    return 1 - 0.07 * Math.sin(Math.PI * k);
+    return 0.9 + 0.1 * k + 0.12 * Math.sin(Math.PI * Math.min(1, k * 1.3)) * (1 - k);
+  }
+  const isHeld = (x, y) => !!(pressed && pressed.held && pressed.x === x && pressed.y === y);
+  let ripples = []; // 松手处的金色涟漪
+  function drawRipples() {
+    const now = performance.now();
+    ripples = ripples.filter((r) => now - r.t < 320);
+    for (const r of ripples) {
+      const k = (now - r.t) / 320;
+      g.save();
+      g.globalAlpha = 0.7 * (1 - k);
+      g.strokeStyle = '#ffe08a';
+      g.lineWidth = 4 * (1 - k) + 1;
+      g.beginPath();
+      g.arc(r.x, r.y, 14 + 46 * k, 0, Math.PI * 2);
+      g.stroke();
+      g.restore();
+    }
   }
   let down = null;
 
@@ -881,7 +902,7 @@
       // 后画的按钮在上层（弹窗），倒着找
       for (let i = buttons.length - 1; i >= 0; i--) {
         const b = buttons[i];
-        if (inRect(p, b)) return (pressed = { x: b.x, y: b.y, t: performance.now() }), b.fn();
+        if (inRect(p, b)) return (pressed = { x: b.x, y: b.y, w: b.w, h: b.h, t: performance.now(), held: true, fn: b.fn }), sfx('press'), buzz(10);
       }
       if (screen === 'help') {
         // 第一页规则 → 第二页英雄图鉴 → 返回
@@ -965,6 +986,14 @@
   });
 
   function endDrag(e) {
+    // 菜单按钮：松手时还在按钮范围内才执行（手指滑出去就取消）
+    if (pressed && pressed.held) {
+      const p = toLogic(e);
+      const hit = e.type === 'pointerup' && p.x >= pressed.x - 12 && p.x <= pressed.x + pressed.w + 12 && p.y >= pressed.y - 12 && p.y <= pressed.y + pressed.h + 12;
+      pressed.held = false;
+      pressed.t = performance.now();
+      if (hit) (ripples.push({ x: p.x, y: p.y, t: performance.now() }), pressed.fn());
+    }
     if (!down || screen !== 'play') {
       down = null;
       return clearDrag();
@@ -1049,6 +1078,24 @@
       g.restore();
       return;
     }
+    // 新按钮素材：主要操作朱红金云纹，次要操作檀木回纹；按住时压暗
+    {
+      const kit = opts.on || opts.red ? 'kit_red' : 'kit_wood';
+      g.save();
+      const pk = pressK(x, y);
+      if (pk !== 1) (g.translate(x + w / 2, y + h / 2), g.scale(pk, pk), g.translate(-(x + w / 2), -(y + h / 2)));
+      if (opts.disabled) g.globalAlpha = 0.55;
+      if (isHeld(x, y)) g.filter = 'brightness(0.78)';
+      const ok = JQ.kit3(g, kit, x, y, w, h);
+      g.filter = 'none';
+      if (ok) {
+        const size = opts.size || 30;
+        text(g, label, x + w / 2, y + h / 2 + 1, Math.min(size, h * 0.5), opts.disabled ? '#c8b8a0' : kit === 'kit_red' ? '#fff0c8' : '#f5e6c8', { stroke: kit === 'kit_red' ? '#5a0e04' : '#1a0c04', strokeW: 4 });
+        g.restore();
+        return;
+      }
+      g.restore();
+    }
     if (JQ.uiOk()) {
       const kind = opts.disabled ? 'btn_stone' : opts.on ? 'btn_gold' : opts.red ? 'btn_red' : opts.flat ? 'btn_wood' : 'btn_paper';
       g.save();
@@ -1121,20 +1168,18 @@
     g.save();
     g.translate(x + s / 2, y + s / 2);
     g.scale(k, k);
-    g.beginPath();
-    g.arc(0, 2, s / 2, 0, Math.PI * 2);
-    g.fillStyle = 'rgba(0,0,0,0.35)';
-    g.fill();
-    g.beginPath();
-    g.arc(0, 0, s / 2, 0, Math.PI * 2);
-    const grd = g.createLinearGradient(0, -s / 2, 0, s / 2);
-    grd.addColorStop(0, '#a8402a');
-    grd.addColorStop(1, '#5a160a');
-    g.fillStyle = grd;
-    g.fill();
-    g.lineWidth = 2.5;
-    g.strokeStyle = '#f0c878';
-    g.stroke();
+    if (!JQ.kitImg(g, 'kit_round_red', -s * 0.62, -s * 0.62, s * 1.24, s * 1.24)) {
+      g.beginPath();
+      g.arc(0, 0, s / 2, 0, Math.PI * 2);
+      const grd = g.createLinearGradient(0, -s / 2, 0, s / 2);
+      grd.addColorStop(0, '#a8402a');
+      grd.addColorStop(1, '#5a160a');
+      g.fillStyle = grd;
+      g.fill();
+      g.lineWidth = 2.5;
+      g.strokeStyle = '#f0c878';
+      g.stroke();
+    }
     g.strokeStyle = '#ffe9a0';
     g.lineWidth = 5;
     g.lineCap = 'round';
@@ -1203,6 +1248,10 @@
     g.translate(x + size / 2, y + size / 2);
     g.scale(k, k);
     const ic = ICON_OF[label];
+    if (!ic && JQ.kitImg(g, 'kit_round_wood', -size * 0.6, -size * 0.6, size * 1.2, size * 1.2)) {
+      text(g, label, 0, 1, size * 0.55, '#ffe9a0', { stroke: '#2a1a08', strokeW: 3 });
+      return g.restore();
+    }
     if (ic ? JQ.uiDraw(g, ic, -size / 2, -size / 2, size, size) : JQ.uiDraw(g, 'disc', -size / 2, -size / 2, size, size)) {
       if (!ic) text(g, label, 0, 1, size * 0.55, '#ffe9a0', { stroke: '#2a1a08', strokeW: 3 });
       return g.restore();
@@ -1260,22 +1309,26 @@
   function segmented(x, y, w, h, items, cur, pick, size) {
     const n = items.length, sw = w / n;
     g.save();
-    JQ.rr(g, x, y, w, h, h / 2);
-    g.fillStyle = 'rgba(25,18,10,0.66)';
-    g.fill();
-    g.strokeStyle = 'rgba(255,210,130,0.45)';
-    g.lineWidth = 1.5;
-    g.stroke();
+    if (!JQ.kit3(g, 'kit_track', x, y - h * 0.08, w, h * 1.16)) {
+      JQ.rr(g, x, y, w, h, h / 2);
+      g.fillStyle = 'rgba(25,18,10,0.66)';
+      g.fill();
+      g.strokeStyle = 'rgba(255,210,130,0.45)';
+      g.lineWidth = 1.5;
+      g.stroke();
+    }
     items.forEach(([k, label], i) => {
       const bx = x + i * sw;
       buttons.push({ x: bx, y, w: sw, h, fn: () => pick(k) });
       if (k === cur) {
-        JQ.rr(g, bx + 4, y + 4, sw - 8, h - 8, (h - 8) / 2);
-        const grd = g.createLinearGradient(0, y, 0, y + h);
-        grd.addColorStop(0, '#ffe39a');
-        grd.addColorStop(1, '#e09a33');
-        g.fillStyle = grd;
-        g.fill();
+        if (!JQ.kit3(g, 'kit_gold', bx + 3, y + 2, sw - 6, h - 4)) {
+          JQ.rr(g, bx + 4, y + 4, sw - 8, h - 8, (h - 8) / 2);
+          const grd = g.createLinearGradient(0, y, 0, y + h);
+          grd.addColorStop(0, '#ffe39a');
+          grd.addColorStop(1, '#e09a33');
+          g.fillStyle = grd;
+          g.fill();
+        }
       }
       text(g, label, bx + sw / 2, y + h / 2 + 1, size || 24, k === cur ? '#3a2a10' : '#e8dcc0');
     });
@@ -1292,17 +1345,21 @@
     g.scale(k, k);
     g.translate(-(x + s / 2), -(y + s / 2));
     const glow = 0.45 + 0.25 * Math.sin(performance.now() / 380);
-    g.beginPath();
-    g.arc(x + s / 2, y + s / 2, s / 2, 0, Math.PI * 2);
-    const grd = g.createRadialGradient(x + s / 2, y + s * 0.4, 4, x + s / 2, y + s / 2, s / 2);
-    grd.addColorStop(0, 'rgba(120,46,20,0.95)');
-    grd.addColorStop(1, 'rgba(40,16,8,0.92)');
-    g.fillStyle = grd;
-    g.fill();
-    g.strokeStyle = `rgba(255,210,120,${0.55 + glow * 0.5})`;
-    g.lineWidth = 2.5;
-    g.stroke();
-    icon(x + 12, y + 8, s - 24);
+    if (isHeld(x, y)) g.filter = 'brightness(0.78)';
+    if (!JQ.kitImg(g, 'kit_round_wood', x - 8, y - 8, s + 16, s + 16)) {
+      g.beginPath();
+      g.arc(x + s / 2, y + s / 2, s / 2, 0, Math.PI * 2);
+      const grd = g.createRadialGradient(x + s / 2, y + s * 0.4, 4, x + s / 2, y + s / 2, s / 2);
+      grd.addColorStop(0, 'rgba(120,46,20,0.95)');
+      grd.addColorStop(1, 'rgba(40,16,8,0.92)');
+      g.fillStyle = grd;
+      g.fill();
+      g.strokeStyle = `rgba(255,210,120,${0.55 + glow * 0.5})`;
+      g.lineWidth = 2.5;
+      g.stroke();
+    }
+    icon(x + 15, y + 11, s - 30);
+    g.filter = 'none';
     JQ.rr(g, x - 4, y + s - 14, s + 8, 28, 14);
     g.fillStyle = 'rgba(140,30,16,0.95)';
     g.fill();
@@ -1321,6 +1378,59 @@
     }
     g.restore();
   }
+  // ---------- 大厅背景对战（用户 2026-11-11 要求保留「现场对战」）----------
+  // 一局 AI 对打在后台跑；渲染到透明离屏画布（约 0.7 倍分辨率），每两帧重画一次，大厅再整张贴上来
+  let menuGame = null, menuCv = null, menuTick = 0;
+  const menuView = { g: null, speed: 1, selected: -1, anims: [], noHud: true, noBg: true };
+  function stepMenuGame(dt) {
+    if (!menuGame || menuGame.over) {
+      menuGame = new JQ.Game({ seed: (Math.random() * 1e9) | 0 });
+      menuGame.aiT = [0, 0];
+      menuGame.warm = 60 * 50;
+    }
+    const warm = menuGame.warm > 0 ? Math.min(menuGame.warm, 300) : 0;
+    for (let k = 0; k < warm; k++) {
+      for (const sid of [0, 1]) if ((menuGame.aiT[sid] -= STEP) <= 0) (JQ.aiThink(menuGame, sid), (menuGame.aiT[sid] = 0.9));
+      menuGame.step(STEP);
+    }
+    menuGame.warm -= warm;
+    for (const sid of [0, 1]) if ((menuGame.aiT[sid] -= dt) <= 0) (JQ.aiThink(menuGame, sid), (menuGame.aiT[sid] = 0.9));
+    menuGame.step(dt);
+  }
+  function drawMenuBattle(top, bot) {
+    const W = C.W + 2 * padX, H = bot - top, k = Math.max(0.5, Math.min(1, scale * dpr * 0.7));
+    if (!menuCv || menuCv.k !== k || menuCv.W !== W || menuCv.H !== H) {
+      menuCv = document.createElement('canvas');
+      menuCv.width = Math.ceil(W * k);
+      menuCv.height = Math.ceil(H * k);
+      Object.assign(menuCv, { k, W, H, fresh: true });
+      menuView.g = menuCv.getContext('2d');
+    }
+    if (menuCv.fresh || (menuTick = (menuTick + 1) % 2) === 0) {
+      const c = menuView.g;
+      c.setTransform(1, 0, 0, 1, 0, 0);
+      c.clearRect(0, 0, menuCv.width, menuCv.height);
+      c.setTransform(k, 0, 0, k, padX * k, -top * k);
+      JQ.render(menuGame, menuView);
+      // 上下渐隐：只留中间交战区，标题和按钮区不压棋盘
+      c.setTransform(1, 0, 0, 1, 0, 0);
+      c.globalCompositeOperation = 'destination-in';
+      const Y = (v) => (v - top) * k, mask = c.createLinearGradient(0, 0, 0, menuCv.height);
+      const f = (v) => Math.max(0, Math.min(1, Y(v) / menuCv.height));
+      mask.addColorStop(0, 'rgba(0,0,0,0)');
+      mask.addColorStop(f(300), 'rgba(0,0,0,0)');
+      mask.addColorStop(f(390), 'rgba(0,0,0,1)');
+      mask.addColorStop(f(760), 'rgba(0,0,0,1)');
+      mask.addColorStop(f(850), 'rgba(0,0,0,0)');
+      mask.addColorStop(1, 'rgba(0,0,0,0)');
+      c.fillStyle = mask;
+      c.fillRect(0, 0, menuCv.width, menuCv.height);
+      c.globalCompositeOperation = 'source-over';
+      menuCv.fresh = false;
+    }
+    g.drawImage(menuCv, -padX, top, W, H);
+  }
+
   // ---------- 大厅（2026-11-11 改版）----------
   // 参考热门手游/小游戏大厅：顶部资源条（右上留给微信胶囊）、中间本命将立绘、两侧悬浮入口带红点、
   // 下方关卡牌 + 卡包 + 开战，底栏五个入口、中间「求贤」凸起。不再在背景跑一局 AI 对打（省电）。
@@ -1353,30 +1463,39 @@
     cg.fillRect(0, 0, W, H);
     return (lobbyCache[file] = c);
   }
+  // 后层：立绘/大字半透明衬在实时对战下面；前层（名牌、等级条）由 drawLobbyHeroFront 画在对战上面
   function drawLobbyHero(now) {
     const name = prog.main;
     const x = 140, y = 262, w = 440, h = 586;
-    buttons.push({ x: x + 40, y: y + 40, w: w - 80, h: h - 80, fn: () => openMainHero() });
-    // 立绘后的光轮
     JQ.fxSprite(g, 'rays', C.W / 2, y + h * 0.42, 620, 620, 0.22, now / 12000);
+    g.save();
+    g.globalAlpha = 0.62;
     if (!name) {
-      // 还没有本命将：三位活动英雄并排当推荐
       ACT.heroes.forEach((n, i) => {
         const c = lobbyPortrait(n);
-        if (c) (g.save(), (g.globalAlpha = 0.85), g.drawImage(c, 150 + i * 140 - 70, 330, 280, 373), g.restore());
+        if (c) g.drawImage(c, 150 + i * 140 - 70, 330, 280, 373);
       });
+    } else {
+      const c = lobbyPortrait(name), bob = Math.sin(now / 1400) * 4;
+      if (c) g.drawImage(c, x, y + bob, w, h);
+      else {
+        JQ.drawOrnament(g, name, C.W / 2, y + h * 0.45, 150, { tier: brkOf(name), behind: true });
+        text(g, HEROES[name].chars[0], C.W / 2, y + h * 0.32, 150, '#2a1a08', { stroke: '#f5ead0', strokeW: 8 });
+        text(g, HEROES[name].chars[1], C.W / 2, y + h * 0.58, 150, '#2a1a08', { stroke: '#f5ead0', strokeW: 8 });
+        JQ.drawOrnament(g, name, C.W / 2, y + h * 0.45, 150, { tier: brkOf(name), behind: false });
+      }
+    }
+    g.restore();
+  }
+  function drawLobbyHeroFront(now) {
+    const name = prog.main;
+    const x = 140, y = 262, w = 440, h = 586;
+    buttons.push({ x: x + 40, y: y + 40, w: w - 80, h: h - 80, fn: () => openMainHero() });
+    if (!name) {
+      // 还没有本命将：三位活动英雄并排当推荐
       text(g, '点这里挑一位本命将', C.W / 2, 760, 24, '#ffe9a0', { stroke: '#2a1a08', strokeW: 5 });
       text(g, '只养一位：用铜钱升级，出战更强', C.W / 2, 794, 14, '#e8dcc0', { font: 'sans-serif', bold: false });
       return;
-    }
-    const c = lobbyPortrait(name), bob = Math.sin(now / 1400) * 4;
-    if (c) g.drawImage(c, x, y + bob, w, h);
-    else {
-      // 立绘还没加载：大字 + 字饰
-      JQ.drawOrnament(g, name, C.W / 2, y + h * 0.45, 150, { tier: brkOf(name), behind: true });
-      text(g, HEROES[name].chars[0], C.W / 2, y + h * 0.32, 150, '#2a1a08', { stroke: '#f5ead0', strokeW: 8 });
-      text(g, HEROES[name].chars[1], C.W / 2, y + h * 0.58, 150, '#2a1a08', { stroke: '#f5ead0', strokeW: 8 });
-      JQ.drawOrnament(g, name, C.W / 2, y + h * 0.45, 150, { tier: brkOf(name), behind: false });
     }
     // 竖排名牌（右上）
     const px = x + w - 66, py = y + 30;
@@ -1434,22 +1553,27 @@
     activityStage = null; // 从活动页/结算回到主菜单后，下一局不再沿用活动关卡
     const now = performance.now();
     const top = -JQ.VIEW.top, bot = C.H + JQ.VIEW.bot;
-    if (!JQ.assetCover(g, 'lobby_bg', -padX, top, C.W + 2 * padX, bot - top)) JQ.drawBackdrop(g);
+    JQ.drawBackdrop(g);
+    stepMenuGame(dt);
+    drawLobbyHero(now);
+    drawMenuBattle(top, bot);
     // 上下压暗托住界面
     if (!menuShade || menuShade.top !== top || menuShade.bot !== bot) {
-      const a = g.createLinearGradient(0, top, 0, 300);
-      a.addColorStop(0, 'rgba(20,14,6,0.8)');
+      // 上下压暗加深：背景对战的两块棋盘在标题区和按钮区淡出，不和文字打架
+      const a = g.createLinearGradient(0, top, 0, 330);
+      a.addColorStop(0, 'rgba(20,14,6,0.92)');
+      a.addColorStop(0.7, 'rgba(20,14,6,0.72)');
       a.addColorStop(1, 'rgba(20,14,6,0)');
-      const b = g.createLinearGradient(0, 760, 0, bot);
+      const b = g.createLinearGradient(0, 780, 0, bot);
       b.addColorStop(0, 'rgba(20,14,6,0)');
-      b.addColorStop(0.35, 'rgba(20,14,6,0.7)');
-      b.addColorStop(1, 'rgba(20,14,6,0.9)');
+      b.addColorStop(0.25, 'rgba(20,14,6,0.75)');
+      b.addColorStop(1, 'rgba(20,14,6,0.92)');
       menuShade = { top, bot, a, b };
     }
     g.fillStyle = menuShade.a;
-    g.fillRect(-padX, top, C.W + 2 * padX, 300 - top);
+    g.fillRect(-padX, top, C.W + 2 * padX, 330 - top);
     g.fillStyle = menuShade.b;
-    g.fillRect(-padX, 760, C.W + 2 * padX, bot - 760);
+    g.fillRect(-padX, 780, C.W + 2 * padX, bot - 780);
     // 漂浮的金色光点（便宜的氛围）
     g.save();
     for (let i = 0; i < 14; i++) {
@@ -1462,7 +1586,7 @@
     }
     g.restore();
 
-    drawLobbyHero(now);
+    drawLobbyHeroFront(now);
 
     // 顶部：主公头像 + 等级条 + 资源；右侧约 170 宽留给微信小游戏胶囊按钮
     {
@@ -1567,22 +1691,24 @@
       g.scale(k, k);
       g.shadowColor = '#ffcf5a';
       g.shadowBlur = 16 + Math.sin(now / 320) * 10;
-      JQ.rr(g, -w / 2, -h / 2, w, h, 22);
-      const grd = g.createLinearGradient(0, -h / 2, 0, h / 2);
-      grd.addColorStop(0, '#ffe39a');
-      grd.addColorStop(0.55, '#f0b443');
-      grd.addColorStop(1, '#c8791c');
-      g.fillStyle = grd;
-      g.fill();
+      if (isHeld(x, y)) g.filter = 'brightness(0.8)';
+      const kitOk = JQ.kit3(g, 'kit_red', -w / 2 - 20, -h / 2 - 6, w + 40, h + 12);
+      g.filter = 'none';
       g.shadowBlur = 0;
-      g.lineWidth = 3.5;
-      g.strokeStyle = '#5a3a12';
-      g.stroke();
-      JQ.rr(g, -w / 2 + 7, -h / 2 + 7, w - 14, h - 14, 16);
-      g.strokeStyle = 'rgba(255,248,220,0.55)';
-      g.lineWidth = 1.5;
-      g.stroke();
-      text(g, '开  战', 0, 2, 42, '#3a2008', { stroke: '#ffeec0', strokeW: 3 });
+      if (kitOk) text(g, '开  战', 0, 2, 44, '#fff0c8', { stroke: '#5a0e04', strokeW: 6 });
+      else {
+        JQ.rr(g, -w / 2, -h / 2, w, h, 22);
+        const grd = g.createLinearGradient(0, -h / 2, 0, h / 2);
+        grd.addColorStop(0, '#ffe39a');
+        grd.addColorStop(0.55, '#f0b443');
+        grd.addColorStop(1, '#c8791c');
+        g.fillStyle = grd;
+        g.fill();
+        g.lineWidth = 3.5;
+        g.strokeStyle = '#5a3a12';
+        g.stroke();
+        text(g, '开  战', 0, 2, 42, '#3a2008', { stroke: '#ffeec0', strokeW: 3 });
+      }
       g.restore();
     }
     // 难度：开战按钮下面一行小分段
@@ -1620,18 +1746,20 @@
       g.scale(k, k);
       g.shadowColor = 'rgba(255,190,80,0.8)';
       g.shadowBlur = 12 + 6 * Math.sin(now / 400);
-      g.beginPath();
-      g.arc(0, 0, R, 0, Math.PI * 2);
-      const grd = g.createRadialGradient(0, -12, 6, 0, 0, R);
-      grd.addColorStop(0, '#b8401c');
-      grd.addColorStop(1, '#5a160a');
-      g.fillStyle = grd;
-      g.fill();
+      if (!JQ.kitImg(g, 'kit_round_red', -R * 1.22, -R * 1.22, R * 2.44, R * 2.44)) {
+        g.beginPath();
+        g.arc(0, 0, R, 0, Math.PI * 2);
+        const grd = g.createRadialGradient(0, -12, 6, 0, 0, R);
+        grd.addColorStop(0, '#b8401c');
+        grd.addColorStop(1, '#5a160a');
+        g.fillStyle = grd;
+        g.fill();
+        g.strokeStyle = '#ffd98a';
+        g.lineWidth = 3;
+        g.stroke();
+      }
       g.shadowBlur = 0;
-      g.strokeStyle = '#ffd98a';
-      g.lineWidth = 3;
-      g.stroke();
-      qxIcon(-34, -40, 68);
+      qxIcon(-30, -36, 60);
       g.restore();
       text(g, '求贤', cx, ny + 84, 18, '#ffe9a0', { stroke: '#2a1a08', strokeW: 3 });
       if (qxFree() || qx().tokens >= QX.ten) redDot(cx + 40, cy - 40, 10);
@@ -3491,7 +3619,7 @@
     v.preload = 'auto';
     v.addEventListener('canplay', () => (qxVideoOk = true));
     v.addEventListener('error', () => (qxVideoOk = false));
-    v.src = 'img/qx_reveal.mp4?v=20261111d';
+    v.src = 'img/qx_reveal.mp4?v=20261111e';
     qxVideo = v;
     return v;
   }
@@ -4054,10 +4182,12 @@
         }
       }
     }
+    drawRipples();
     requestAnimationFrame(frame);
   }
   // 首屏就会用到的小图先下载（图标集、大厅侧边入口、求贤令），免得先闪一下文字占位
   for (const f of ['icons', 'ic_breakthrough', 'ic_stage', 'ic_token', 'lobby_bg']) JQ.preloadArt(f);
+  JQ.preloadKit();
   requestAnimationFrame(frame);
 
   // 调试：?screen=custom/stages/testlab/paused 直接打开对应界面（截图用）

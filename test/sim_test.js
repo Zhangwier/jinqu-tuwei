@@ -233,9 +233,30 @@ const card = (k, key, lv) => JQ.makeCard(k, key, lv);
     b.place(card('unit', '刀', 5), 1, 2);
     assert.strictEqual(b.place(card('unit', '刀', 5), 1, 2), 'merge', '5 级小兵还能合');
     assert.strictEqual(b.cell(1, 2).card.level, 6, '合成到 6 级');
-    assert.strictEqual(JQ.unitCount(4), 2, '4 级每次召 2 个');
-    assert.strictEqual(JQ.unitCount(5), 4, '5 级门槛：每次召 4 个');
-    assert.strictEqual(JQ.unitCount(6), 4, '6 级保持 4 个');
+    assert.deepStrictEqual([1, 2, 3, 4, 5, 6, 9].map(JQ.unitCount), [1, 2, 3, 4, 6, 6, 6], '每次召唤 1/2/3/4/6，5 级起 6 个');
+    for (let lv = 1; lv < 8; lv++) assert.ok(JQ.unitCount(lv + 1) * JQ.levelMult(lv + 1) > JQ.unitCount(lv) * JQ.levelMult(lv), `${lv + 1} 级整卡战力高于 ${lv} 级`);
+  }
+  // 英雄像兵卡一样：冷却好了再踩就再召一个，同名在场上限 = 英雄等级
+  {
+    assert.deepStrictEqual([1, 2, 3, 5, 9].map(JQ.heroCap), [1, 2, 3, 5, 5], '同名英雄在场上限 = 等级（最多 5）');
+    const g = new JQ.Game({ seed: 7, pack: 'sanguo' });
+    const s = g.sides[0];
+    s.board.cell(0, 0).card = card('char', '张', 3);
+    s.board.cell(0, 1).card = card('char', '飞', 1);
+    s.board.rebuild();
+    const link = s.board.links.find((l) => l.hero === '张飞');
+    g.tryHero(s, link);
+    assert.strictEqual(g.heroCount(s, '张飞'), 1, '第一次召出张飞');
+    g.tryHero(s, link);
+    assert.strictEqual(g.heroCount(s, '张飞'), 1, '冷却没好不会再召');
+    s.heroCd['张飞'] = 0;
+    g.tryHero(s, link);
+    assert.strictEqual(g.heroCount(s, '张飞'), 2, '冷却好了再召一个，前一个还在场');
+    s.heroCd['张飞'] = 0;
+    g.tryHero(s, link);
+    s.heroCd['张飞'] = 0;
+    g.tryHero(s, link);
+    assert.strictEqual(g.heroCount(s, '张飞'), 3, '3 级张飞最多同时 3 个');
   }
   // 兵种池：三国/西游/唐朝各有不同兵种，同字同属性
   {

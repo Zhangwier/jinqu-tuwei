@@ -346,7 +346,7 @@
   function loadOrn(file) {
     if (!ornImgs[file]) {
       const im = new Image();
-      im.src = `img/${file}.webp?v=20261111d`;
+      im.src = `img/${file}.webp?v=20261111e`;
       ornImgs[file] = im;
     }
     return ornImgs[file];
@@ -458,7 +458,7 @@
   function loadExtra(file) {
     if (!extraImgs[file]) {
       const im = new Image();
-      im.src = `img/${file}.webp?v=20261111d`;
+      im.src = `img/${file}.webp?v=20261111e`;
       extraImgs[file] = im;
     }
     return extraImgs[file];
@@ -492,6 +492,25 @@
   JQ.portraitFile = (hero, preview) => SKIN_ART[hero] || (PORTRAIT_OF[hero] && (preview || PORTRAIT_OK.has(hero)) ? 'hero_' + PORTRAIT_OF[hero] : null);
   JQ.portraitOf = (hero) => JQ.portraitFile(hero);
   JQ.preloadArt = (file) => loadExtra(file);
+  // 按钮素材（img/kit_*.webp，l0veyou 生成后抠绿）：横向三段拉伸，两端花纹按原比例，中间平整处拉长
+  const KIT_CAP = { kit_red: 1.15, kit_wood: 0.62, kit_jade: 0.9, kit_track: 0.55, kit_gold: 0.8 };
+  JQ.kit3 = function (g, id, x, y, w, h) {
+    const im = loadExtra(id);
+    if (!(im.complete && im.naturalWidth)) return false;
+    const iw = im.naturalWidth, ih = im.naturalHeight, sc = ih * KIT_CAP[id];
+    const dc = Math.min(h * KIT_CAP[id], w / 2);
+    g.drawImage(im, 0, 0, sc, ih, x, y, dc, h);
+    g.drawImage(im, sc, 0, iw - 2 * sc, ih, x + dc, y, w - 2 * dc, h);
+    g.drawImage(im, iw - sc, 0, sc, ih, x + w - dc, y, dc, h);
+    return true;
+  };
+  JQ.kitImg = function (g, id, x, y, w, h) {
+    const im = loadExtra(id);
+    if (!(im.complete && im.naturalWidth)) return false;
+    g.drawImage(im, x, y, w, h);
+    return true;
+  };
+  JQ.preloadKit = () => ['kit_red', 'kit_wood', 'kit_track', 'kit_gold', 'kit_round_red', 'kit_round_wood'].forEach(loadExtra);
   // 属性/效果图标（img/icons.webp，6x4 格，每格 128）：数值和效果用图标表达，不靠大段文字
   const ICON_IDS = ['atk', 'hp', 'armor', 'range', 'rate', 'speed', 'cd', 'crit', 'aoe', 'ctrl', 'heal', 'shield', 'summon', 'buff', 'dash', 'fire', 'bolt', 'clone', 'drain', 'stealth', 'knock', 'slow', 'bun', 'aura'];
   const ICON_FALLBACK = { atk: '攻', hp: '血', armor: '甲', range: '射', rate: '速', speed: '移', cd: '冷', crit: '暴', aoe: '范', ctrl: '控', heal: '疗', shield: '盾', summon: '召', buff: '增', dash: '冲', fire: '火', bolt: '雷', clone: '影', drain: '吸', stealth: '隐', knock: '退', slow: '缓', bun: '包', aura: '环' };
@@ -1109,13 +1128,17 @@
     // 字饰全部画在卡片之前（ORT 的 behind=true），这里不再重复叠一层
 
     // 英雄名牌与状态
+    // 名牌：在场数量 / 上限 + 下一个的冷却
+    const aliveN = {};
+    for (const u of game.units) if (u.side === sid && u.isHero && !u.clone && u.hp > 0) aliveN[u.key] = (aliveN[u.key] || 0) + 1;
     for (const link of b.links) {
       const [A, B] = link.cells.map((x) => JQ.cellRect(sid, x.r, x.c));
       const mx = (A.cx + B.cx) / 2;
-      const alive = s.heroAlive[link.hero];
-      const cd = s.heroCd[link.hero] || 0;
+      const n = aliveN[link.hero] || 0, cap = JQ.heroCap(link.level);
+      const alive = n > 0;
+      const cd = n < cap ? s.heroCd[link.hero] || 0 : 0;
       g.save();
-      const label = alive ? link.hero + '·出战' : cd > 0 ? `${link.hero} ${Math.ceil(cd)}s` : link.hero;
+      const label = (alive ? `${link.hero} ×${n}` : link.hero) + (cd > 0 ? ` ${Math.ceil(cd)}s` : n >= cap && alive ? ' 满' : '');
       g.font = `bold 12px ${FONT}`;
       const tw = g.measureText(label).width + 12;
       g.fillStyle = alive ? 'rgba(170,30,30,0.92)' : 'rgba(40,30,20,0.85)';
@@ -2501,7 +2524,7 @@
       g.scale(z, z);
       g.translate(-C.W / 2, -700);
     }
-    g.drawImage(bg, 0, -BG_EXT);
+    if (!view.noBg) g.drawImage(bg, 0, -BG_EXT); // 大厅背景对战画在透明离屏层上，底图由大厅自己画
     if (!view.test) {
       drawBoard(game, 1, view);
       drawBoard(game, 0, view);
