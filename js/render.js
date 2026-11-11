@@ -12,7 +12,7 @@
     bun: { x: 6, y: 1150, w: 74, h: 88 },
     recruit: { x: 556, y: 1150, w: 156, h: 88 },
     pause: { x: 10, y: 6, w: 42, h: 42 },
-    speed: { x: 668, y: 6, w: 42, h: 42 },
+    speed: { x: 668, y: 102, w: 42, h: 42 }, // 右上 0~96 留给微信小游戏胶囊按钮
     info: { y: 1258 },
   };
   JQ.UI = UI;
@@ -288,6 +288,8 @@
       spriteCache.clear();
     }
   };
+  let spriteMiss = 0;
+  JQ.spriteStats = () => ({ size: spriteCache.size, miss: spriteMiss });
   function sprite(key, w, h, paint) {
     let c = spriteCache.get(key);
     if (c) return c;
@@ -298,7 +300,8 @@
     gg.scale(spritePx, spritePx);
     paint(gg);
     spriteCache.set(key, c);
-    if (spriteCache.size > 180) spriteCache.delete(spriteCache.keys().next().value);
+    if (spriteCache.size > 320) spriteCache.delete(spriteCache.keys().next().value); // 冷却扇形/底盘也进缓存后上限放宽，免得把汉字贴图挤掉
+    spriteMiss++;
     return c;
   }
   // 单行文字贴图；返回逻辑尺寸，调用方按中心点绘制。
@@ -343,7 +346,7 @@
   function loadOrn(file) {
     if (!ornImgs[file]) {
       const im = new Image();
-      im.src = `img/${file}.webp?v=20261110h`;
+      im.src = `img/${file}.webp?v=20261111b`;
       ornImgs[file] = im;
     }
     return ornImgs[file];
@@ -455,7 +458,7 @@
   function loadExtra(file) {
     if (!extraImgs[file]) {
       const im = new Image();
-      im.src = `img/${file}.webp?v=20261110h`;
+      im.src = `img/${file}.webp?v=20261111b`;
       extraImgs[file] = im;
     }
     return extraImgs[file];
@@ -470,13 +473,70 @@
     return true;
   }
   JQ.iconDraw = (g, id, x, y, w, h, alpha) => drawExtra(g, 'ic_' + id, x, y, w, h, alpha);
-  const PORTRAIT_OF = { 吕布: 'lvbu', 悟空: 'wukong', 岳飞: 'yuefei' };
-  JQ.portraitOf = (hero) => PORTRAIT_OF[hero] || null;
+  JQ.assetDraw = (g, file, x, y, w, h, alpha) => drawExtra(g, file, x, y, w, h, alpha);
+  // 已装备皮肤的英雄，立绘换成皮肤图（main.js 每次换装后调用 JQ.setSkinArt）
+  const SKIN_ART = {};
+  JQ.setSkinArt = (map) => {
+    for (const k of Object.keys(SKIN_ART)) delete SKIN_ART[k];
+    Object.assign(SKIN_ART, map || {});
+  };
+  // 英雄立绘 img/hero_<id>.webp（2026-11-11 起 65 位全有，l0veyou 生成）
+  const PORTRAIT_OF = { 吕布: 'lvbu', 悟空: 'wukong', 岳飞: 'yuefei', 刘备: 'liubei', 关羽: 'guanyu', 张飞: 'zhangfei', 赵云: 'zhaoyun', 孔明: 'kongming', 黄忠: 'huangzhong', 曹操: 'caocao', 曹仁: 'caoren', 典韦: 'dianwei', 许褚: 'xuchu', 孙策: 'sunce', 孙权: 'sunquan', 周瑜: 'zhouyu', 吕蒙: 'lvmeng', 貂蝉: 'diaochan', 八戒: 'bajie', 沙僧: 'shaseng', 唐僧: 'tangseng', 白龙: 'bailong', 龙王: 'longwang', 哪吒: 'nezha', 二郎: 'erlang', 观音: 'guanyin', 如来: 'rulai', 牛魔: 'niumo', 铁扇: 'tieshan', 嫦娥: 'change', 太白: 'taibai', 红孩: 'honghai', 玉帝: 'yudi', 李靖: 'lijing', 秦琼: 'qinqiong', 敬德: 'jingde', 咬金: 'yaojin', 仁贵: 'rengui', 子仪: 'ziyi', 玄奘: 'xuanzang', 则天: 'zetian', 天罡: 'tiangang', 仁杰: 'renjie', 玉环: 'yuhuan', 李白: 'libai', 杜甫: 'dufu', 王维: 'wangwei', 居易: 'juyi', 禄山: 'lushan', 岳云: 'yueyun', 杨业: 'yangye', 延昭: 'yanzhao', 宗保: 'zongbao', 桂英: 'guiying', 宗泽: 'zongze', 世忠: 'shizhong', 红玉: 'hongyu', 狄青: 'diqing', 包拯: 'baozheng', 展昭: 'zhanzhao', 苏轼: 'sushi', 清照: 'qingzhao', 武松: 'wusong', 林冲: 'linchong', 夏夏: 'xiaxia' };
+  // 立绘是突破奖励：只有突破过的英雄（main.js 传进来）才显示原版立绘；穿了皮肤的显示皮肤图。
+  // 活动页等“奖励预览”传 opts.preview 强制显示。
+  const PORTRAIT_OK = new Set();
+  JQ.setPortraitUnlock = (heroes) => {
+    PORTRAIT_OK.clear();
+    for (const h of heroes || []) PORTRAIT_OK.add(h);
+  };
+  JQ.portraitFile = (hero, preview) => SKIN_ART[hero] || (PORTRAIT_OF[hero] && (preview || PORTRAIT_OK.has(hero)) ? 'hero_' + PORTRAIT_OF[hero] : null);
+  JQ.portraitOf = (hero) => JQ.portraitFile(hero);
+  JQ.preloadArt = (file) => loadExtra(file);
+  // 属性/效果图标（img/icons.webp，6x4 格，每格 128）：数值和效果用图标表达，不靠大段文字
+  const ICON_IDS = ['atk', 'hp', 'armor', 'range', 'rate', 'speed', 'cd', 'crit', 'aoe', 'ctrl', 'heal', 'shield', 'summon', 'buff', 'dash', 'fire', 'bolt', 'clone', 'drain', 'stealth', 'knock', 'slow', 'bun', 'aura'];
+  const ICON_FALLBACK = { atk: '攻', hp: '血', armor: '甲', range: '射', rate: '速', speed: '移', cd: '冷', crit: '暴', aoe: '范', ctrl: '控', heal: '疗', shield: '盾', summon: '召', buff: '增', dash: '冲', fire: '火', bolt: '雷', clone: '影', drain: '吸', stealth: '隐', knock: '退', slow: '缓', bun: '包', aura: '环' };
+  JQ.ICON_IDS = ICON_IDS;
+  JQ.statIcon = function (g, id, x, y, s) {
+    const im = loadExtra('icons'), i = ICON_IDS.indexOf(id);
+    if (i >= 0 && im.complete && im.naturalWidth) {
+      g.drawImage(im, (i % 6) * 128, Math.floor(i / 6) * 128, 128, 128, x, y, s, s);
+      return true;
+    }
+    g.save();
+    g.beginPath();
+    g.arc(x + s / 2, y + s / 2, s / 2, 0, TAU);
+    g.fillStyle = '#5a1e10';
+    g.fill();
+    g.strokeStyle = '#e6c27a';
+    g.lineWidth = Math.max(1, s * 0.06);
+    g.stroke();
+    g.restore();
+    text(g, ICON_FALLBACK[id] || '?', x + s / 2, y + s / 2 + 1, s * 0.5, '#ffe9a0');
+    return false;
+  };
+  JQ.artReady = (file) => {
+    const im = loadExtra(file);
+    return im.complete && im.naturalWidth > 0;
+  };
   // 立绘按 cover 裁切，不拉伸
+  // 通用 cover 绘制（卡框/插画等非人物素材）
+  JQ.assetCover = function (g, file, x, y, w, h) {
+    const im = loadExtra(file);
+    if (!(im.complete && im.naturalWidth)) return false;
+    const ir = im.naturalWidth / im.naturalHeight, br = w / h;
+    let sx = 0, sy = 0, sw = im.naturalWidth, sh = im.naturalHeight;
+    if (ir > br) (sw = im.naturalHeight * br), (sx = (im.naturalWidth - sw) / 2);
+    else (sh = im.naturalWidth / br), (sy = (im.naturalHeight - sh) / 2);
+    g.drawImage(im, sx, sy, sw, sh, x, y, w, h);
+    return true;
+  };
+  JQ.cardFrameDraw = (g, x, y, w, h) => JQ.assetCover(g, 'hero_card_frame', x, y, w, h);
   JQ.portraitDraw = function (g, hero, x, y, w, h, opts) {
-    const id = PORTRAIT_OF[hero];
-    if (!id) return false;
-    const im = loadExtra('hero_' + id);
+    let file = (opts && opts.file) || JQ.portraitFile(hero, opts && opts.preview);
+    if (!file) return false;
+    // 小尺寸（图鉴格子、头像）用 192x256 小图，省流量和解码
+    if (w <= 220 && h <= 300 && !(opts && opts.full)) file += '_s';
+    const im = loadExtra(file);
     if (!(im.complete && im.naturalWidth)) return false;
     const ir = im.naturalWidth / im.naturalHeight, br = w / h;
     let sx = 0, sy = 0, sw = im.naturalWidth, sh = im.naturalHeight;
@@ -495,8 +555,10 @@
   };
   JQ.preloadUiArt = function () {
     for (const id of ['mainhero', 'breakthrough', 'stage', 'task', 'stone', 'seal']) loadExtra('ic_' + id);
-    for (const id of Object.values(PORTRAIT_OF)) loadExtra('hero_' + id);
+    for (const id of ['lvbu', 'wukong', 'yuefei']) loadExtra('hero_' + id);
     for (const id of ['warrior', 'tank', 'assassin', 'mage', 'archer', 'support', 'commander', 'special']) loadExtra('role_' + id);
+    for (const f of ['hero_card_frame', 'talent_economy', 'talent_cardpool', 'talent_unit', 'talent_hero', 'talent_defense', 'talent_special']) loadExtra(f);
+    for (const f of ['skill_lvbu_1', 'skill_lvbu_2', 'skill_lvbu_3', 'skill_wukong_1', 'skill_wukong_2', 'skill_wukong_3', 'skill_yuefei_1', 'skill_yuefei_2', 'skill_yuefei_3']) loadExtra(f);
   };
   // 兵种/职业小图标：先找生成图标，再退回 code 绘制
   const ROLE_ICON = { 战士: 'warrior', 坦克: 'tank', 刺客: 'assassin', 法师: 'mage', 射手: 'archer', 辅助: 'support', 统帅: 'commander', 特殊: 'special' };
@@ -1031,17 +1093,17 @@
       // 冷却：时钟式扫过
       if (x.card.kind === 'unit' && x.cd > 0) {
         const f = Math.min(1, x.cd / (UNITS[x.card.key].cd * s.cdMult()));
-        g.save();
-        g.beginPath();
-        g.rect(r.x + 2, r.y + 2, r.w - 4, r.h - 4);
-        g.clip();
-        g.fillStyle = 'rgba(20,20,30,0.42)';
-        g.beginPath();
-        g.moveTo(r.cx, r.cy);
-        g.arc(r.cx, r.cy, r.w, -Math.PI / 2, -Math.PI / 2 + TAU * f);
-        g.closePath();
-        g.fill();
-        g.restore();
+        // 扇形按 1/48 量化后缓存成贴图，免去每格每帧 save/clip/restore
+        const q = Math.ceil(f * 48), w = r.w - 4, h = r.h - 4;
+        const pie = sprite(`cd|${w}|${h}|${q}`, w, h, (gg) => {
+          gg.fillStyle = 'rgba(20,20,30,0.42)';
+          gg.beginPath();
+          gg.moveTo(w / 2, h / 2);
+          gg.arc(w / 2, h / 2, w, -Math.PI / 2, -Math.PI / 2 + (TAU * q) / 48);
+          gg.closePath();
+          gg.fill();
+        });
+        g.drawImage(pie, r.x + 2, r.y + 2, w, h);
       }
     }
     // 字饰全部画在卡片之前（ORT 的 behind=true），这里不再重复叠一层
@@ -1193,8 +1255,9 @@
     rr(g, x, y, w * view[lagKey], h, 6);
     g.fill();
     const grd = g.createLinearGradient(0, y, 0, y + h);
-    grd.addColorStop(0, '#ff7a60');
-    grd.addColorStop(1, s.id === 0 ? '#c0302a' : '#a8201a');
+    // 我方蓝、敌方红（和阵营底盘同色），一眼分清哪条是自己的
+    grd.addColorStop(0, s.id === 0 ? '#7ab4ff' : '#ff7a60');
+    grd.addColorStop(1, s.id === 0 ? '#2a62c8' : '#a8201a');
     g.fillStyle = grd;
     if (f > 0) {
       rr(g, x, y, Math.max(12, w * f), h, 6);
@@ -1336,18 +1399,27 @@
       g.save();
       g.globalAlpha = baseA;
     }
-    // 阵营底盘
-    g.fillStyle = alphaHex(TEAM[sid], 0.3);
-    g.beginPath();
-    g.ellipse(u.x, u.y + u.r * 0.8, u.r * pop, u.r * 0.36 * pop, 0, 0, TAU);
-    g.fill();
-    if (u.level >= 2) {
-      g.strokeStyle = JQ.LEVEL_COLORS[Math.min(u.level, C.MAX_LEVEL)];
-      g.lineWidth = 1 + u.level * 0.5;
-      g.stroke();
+    // 阵营底盘 + 等级环：出场缩放结束后用缓存贴图（每帧几十个单位，省掉一半路径填充/描边）
+    const lvB = u.level >= 2 ? Math.min(u.level, C.MAX_LEVEL) : 0, lvW = 1 + Math.min(u.level, 10) * 0.5; // 小兵没有等级上限：环宽按原样随等级变粗
+    if (pop === 1) {
+      const rw = u.r + 4, rh = u.r * 0.36 + 4;
+      const disc = sprite(`disc|${sid}|${lvB}|${lvW}|${u.r}`, rw * 2, rh * 2, (gg) => {
+        gg.fillStyle = alphaHex(TEAM[sid], 0.3);
+        gg.beginPath();
+        gg.ellipse(rw, rh, u.r, u.r * 0.36, 0, 0, TAU);
+        gg.fill();
+        if (lvB) (gg.strokeStyle = JQ.LEVEL_COLORS[lvB]), (gg.lineWidth = lvW), gg.stroke();
+      });
+      g.drawImage(disc, u.x - rw, u.y + u.r * 0.8 - rh, rw * 2, rh * 2);
+    } else {
+      g.fillStyle = alphaHex(TEAM[sid], 0.3);
+      g.beginPath();
+      g.ellipse(u.x, u.y + u.r * 0.8, u.r * pop, u.r * 0.36 * pop, 0, 0, TAU);
+      g.fill();
+      if (lvB) (g.strokeStyle = JQ.LEVEL_COLORS[lvB]), (g.lineWidth = lvW), g.stroke();
     }
     if (u.isHero) {
-      const aura = HEROES[u.key].aura;
+      const aura = (u.def && u.def.aura) || HEROES[u.key].aura;
       drawAura(g, aura, x, y, 50);
       g.strokeStyle = alphaHex(aura, 0.85);
       g.lineWidth = 2;
@@ -1372,7 +1444,7 @@
       // 字饰：战旗在字后面，翎羽/金箍/云在字上面
       JQ.drawUnitOrnament(g, u, x, y, 44, true);
       // 贴图自带缩放，不用 save/translate/scale/restore
-      drawGlyph(g, u.key, x, y, 38, INK[sid], sid === 0 ? 'rgba(255,255,255,0.85)' : 'rgba(255,225,215,0.85)', 6, pop);
+      drawGlyph(g, u.key, x, y, 38, INK[sid], (u.def && u.def.halo) || (sid === 0 ? 'rgba(255,255,255,0.85)' : 'rgba(255,225,215,0.85)'), 6, pop);
       JQ.drawUnitOrnament(g, u, x, y, 44, false);
       if (u.flash > 0) {
         g.globalAlpha = baseA * (u.flash / 0.12);
@@ -1461,7 +1533,7 @@
       g.stroke();
     }
     if (u.isHero) {
-      const aura = HEROES[u.key].aura;
+      const aura = (u.def && u.def.aura) || HEROES[u.key].aura;
       drawAura(g, aura, x, y, 50);
       g.strokeStyle = alphaHex(aura, 0.85);
       g.lineWidth = 2;
@@ -1822,12 +1894,13 @@
         g.fillStyle = col;
         const rnd = JQ.rng(Math.floor(f.x * 13 + f.y * 7));
         const n = f.big ? 16 : 8;
+        g.beginPath(); // 墨点合成一条路径一次填充
         for (let i = 0; i < n; i++) {
-          const a = rnd() * TAU, d = (6 + rnd() * (f.big ? 50 : 22)) * (0.4 + ease(k));
-          g.beginPath();
-          g.arc(f.x + Math.cos(a) * d, f.y + Math.sin(a) * d, 2 + rnd() * (f.big ? 7 : 4), 0, TAU);
-          g.fill();
+          const a = rnd() * TAU, d = (6 + rnd() * (f.big ? 50 : 22)) * (0.4 + ease(k)), cx = f.x + Math.cos(a) * d, cy = f.y + Math.sin(a) * d, rr0 = 2 + rnd() * (f.big ? 7 : 4);
+          g.moveTo(cx + rr0, cy);
+          g.arc(cx, cy, rr0, 0, TAU);
         }
+        g.fill();
         g.globalAlpha = 0.55 * (1 - k);
         text(g, f.text, f.x, f.y + k * 16, f.big ? 30 : 22, col);
         break;
@@ -2113,22 +2186,22 @@
       const k = 1 - game.eventT / 25;
       g.save();
       g.fillStyle = 'rgba(25,16,8,0.62)';
-      rr(g, 568, 50, 88, 24, 12);
+      rr(g, 568, 146, 88, 24, 12);
       g.fill();
       g.strokeStyle = '#ffd23f';
       g.lineWidth = 2.5;
       g.beginPath();
-      g.arc(583, 62, 7, -Math.PI / 2, -Math.PI / 2 + TAU * k);
+      g.arc(583, 158, 7, -Math.PI / 2, -Math.PI / 2 + TAU * k);
       g.stroke();
-      text(g, `天命 ${Math.ceil(game.eventT)}s`, 622, 63, 12, game.eventT < 4 ? '#ffd23f' : '#e8dcc0', { font: 'sans-serif' });
+      text(g, `天命 ${Math.ceil(game.eventT)}s`, 622, 159, 12, game.eventT < 4 ? '#ffd23f' : '#e8dcc0', { font: 'sans-serif' });
       g.restore();
     }
     g.restore();
     g.save();
     g.fillStyle = 'rgba(30,20,10,0.65)';
-    rr(g, 568, 12, 88, 30, 14);
+    rr(g, 568, 108, 88, 30, 14);
     g.fill();
-    text(g, `${mm}:${ss}`, 612, 28, 20, game.overtime ? '#ff6a4a' : '#ffe9a0', { font: 'sans-serif' });
+    text(g, `${mm}:${ss}`, 612, 124, 20, game.overtime ? '#ff6a4a' : '#ffe9a0', { font: 'sans-serif' });
     g.restore();
     g.restore();
     // 我方基地血条跟着招兵栏走
@@ -2409,6 +2482,11 @@
     g.restore();
   }
 
+  // 只画战场底图（二级页面/大厅用，不跑模拟也不画单位）
+  JQ.drawBackdrop = function (g) {
+    if (!bg) bg = makeBackground();
+    g.drawImage(bg, 0, -BG_EXT);
+  };
   JQ.render = function (game, view) {
     const g = view.g;
     JQ.fxBudgetReset();

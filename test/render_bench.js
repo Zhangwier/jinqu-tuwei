@@ -54,7 +54,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
       return r.result && r.result.result && r.result.result.value;
     };
     await send('Page.enable');
-    await send('Page.navigate', { url: 'http://127.0.0.1:8731/' });
+    await send('Page.navigate', { url: process.env.JQ_URL || 'http://127.0.0.1:8731/' });
     await sleep(2000);
     const out = await evaluate(`(() => {
       const JQ = window.JQ;

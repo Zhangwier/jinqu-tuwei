@@ -17,7 +17,8 @@
     // msedge --headless=new --dump-dom "http://127.0.0.1:8731/test/ui_test.html"
     const out = [], fails = [];
     const check = (ok, name) => (ok ? out.push('✓ ' + name) : (fails.push(name), out.push('✗ ' + name)));
-    try {
+    (async () => { try {
+      localStorage.setItem('jq_tut', '1');
       const j = window.__jq; j.newGame();
       const g = j.game, s = g.sides[0];
       s.buns = 500;
@@ -92,11 +93,57 @@
       check(j.game.modeKey === 'breakthrough' && j.game.activity === 'hulaoguan', '活动关模式');
       check(j.game.sides[0].board.links.some((l) => l.hero === '吕布' && l.level === 3), '活动关送 3 级吕布');
       check(j.game.brkDefs['吕布'] && j.game.brkDefs['吕布'].ult.name === '神鬼乱舞', '突破定义进入战斗');
+      // 第一关新手引导：拖卡 → 看召兵 → 招兵 → 合英雄 → 结束
+      localStorage.removeItem('jq_tut');
+      j.setScreen('menu');
+      await new Promise((r) => setTimeout(r, 150)); // 让主菜单画一帧，清掉活动关状态
+      j.newGame();
+      j.startTutorial();
+      const tg = j.game, ts = tg.sides[0];
+      check(j.tut && j.tut.step === 0, '新手引导开始');
+      const t0 = tg.time;
+      await new Promise((r) => setTimeout(r, 300));
+      check(tg.time === t0, '引导等待时战斗暂停');
+      const si = ts.shop.findIndex((c) => c && c.kind === 'unit');
+      const empty = ts.board.all().filter((x) => x.unlocked && !x.crystal && !x.card && x.r >= 0);
+      tg.take(0, si, empty[0].r, empty[0].c);
+      check(j.tut && j.tut.step === 1, '拖卡后进入下一步');
+      j.tutNext();
+      tg.recruit(0);
+      check(j.tut && j.tut.step === 3 && ts.shop[0] && ts.shop[0].kind === 'char', '招兵后塞入英雄字卡');
+      const hero = j.tut.hero, cells = ts.board.all().filter((x) => x.unlocked && !x.crystal && !x.card && x.r >= 0);
+      const pair = cells.find((a) => cells.some((b) => b.r === a.r && b.c === a.c + 1));
+      if (pair) (tg.take(0, 0, pair.r, pair.c), tg.take(0, 1, pair.r, pair.c + 1));
+      await new Promise((r) => setTimeout(r, 200));
+      check(ts.board.links.some((l) => l.hero === hero) && j.tut && j.tut.step === 4, '两字并排合成英雄');
+      j.tutNext();
+      check(!j.tut && localStorage.getItem('jq_tut') === '1', '引导结束并记住');
+      j.setQx({ tokens: 0, pity: 0, freeDay: '', owned: {}, equip: {}, yayun: 0 });
+      j.openQiuxian();
+      check(j.screen === 'qiuxian', '求贤页打开');
+      check(j.qxDraw(1) && j.prog.qx.tokens === 0 && j.prog.qx.freeDay, '每日免费一次不扣求贤令');
+      j.qxReset();
+      check(!j.qxDraw(1), '免费用完且没有求贤令时不能抽');
+      j.setQx({ tokens: 30, pity: 0 });
+      for (let i = 0; i < 3; i++) (j.qxReset(), j.qxDraw(10));
+      const own = Object.keys(j.prog.qx.owned);
+      check(j.prog.qx.tokens === 0 && own.length >= 1, '30 抽保底必出皮肤');
+      const sk = JQ.SKIN_BY_ID[own[0]];
+      check(j.prog.qx.equip[sk.hero] === sk.id, '第一款皮肤自动穿上');
+      j.qxReset();
+      const other = JQ.SKINS.find((x) => !j.prog.qx.owned[x.id]);
+      j.setQx({ yayun: 120 });
+      check(j.qxExchange(other.id) && j.prog.qx.owned[other.id] && j.prog.qx.yayun === 0, '雅韵兑换指定皮肤');
+      j.qxReset();
+      j.setQx({ equip: { 吕布: 'lvbu_chitu' }, owned: Object.assign({}, j.prog.qx.owned, { lvbu_chitu: true }) });
+      j.startActivityStage('hulaoguan');
+      check(j.game.brkDefs['吕布'].skin === 'lvbu_chitu' && j.game.brkDefs['吕布'].ult.name === '赤兔·焚原', '皮肤 + 突破进入战斗（二突后用皮肤进化大招）');
     } catch (e) {
       fails.push('异常 ' + e.message);
       out.push(e.stack);
     }
     document.getElementById('out').textContent = (fails.length ? 'FAIL ' + fails.length : 'PASS') + '\n' + out.join('\n');
+    })();
   </script>
 </body>
 </html>

@@ -137,9 +137,14 @@
       this.startHeroLv = Math.max(1, opts.startHeroLv || 1);
       // 玩家突破等级：只影响玩家方英雄，敌人始终用原始定义
       this.breakthrough = opts.breakthrough || null;
+      // 皮肤同理：只换玩家方英雄的外观和一个技能/大招，{ 英雄名: 皮肤 id }
+      this.skins = opts.skins || null;
       this.brkDefs = {};
       for (const [name, lv] of Object.entries(opts.breakthrough || {})) {
         if (JQ.BREAKTHROUGH.byHero[name] && lv > 0) this.brkDefs[name] = JQ.heroAtBrk(name, Math.min(3, lv));
+      }
+      for (const [name, id] of Object.entries(opts.skins || {})) {
+        if (HEROES[name] && JQ.SKIN_BY_ID[id]) this.brkDefs[name] = JQ.heroDef(name, (opts.breakthrough || {})[name] || 0, id);
       }
       // 卡包：玩家自选，对手默认随机一个已开放的；自定义包没配好不能进
       const usable = (p) => !!(JQ.PACKS[p] && JQ.PACKS[p].open && (p !== 'custom' || JQ.customReady()));
@@ -1323,7 +1328,7 @@
     stepHeroAction(u, dt, foes) {
       const a = u.action;
       if (!a) return false;
-      const aura = HEROES[u.key].aura;
+      const aura = (u.def && u.def.aura) || HEROES[u.key].aura;
       if (a.type === 'dash') {
         u.x += a.vx * dt;
         u.y += a.vy * dt;
@@ -1450,7 +1455,7 @@
     // 通用技能效果
     effect(u, e, isUlt, live, near, range) {
       const s = this.sides[u.side];
-      const aura = HEROES[u.key].aura;
+      const aura = (u.def && u.def.aura) || HEROES[u.key].aura;
       const opt = { skill: true, ult: isUlt, burn: e.burn };
       const fx = (o) => e.fx && this.addFx(Object.assign({ kind: e.fx, color: aura, life: e.big || isUlt ? 1.3 : 0.9, big: e.big, text: e.text }, o));
       const nearest = () => near.slice().sort((a, b) => Math.hypot(a.x - u.x, a.y - u.y) - Math.hypot(b.x - u.x, b.y - u.y))[0];
@@ -1609,6 +1614,7 @@
           const strike = (f) => {
             this.damage(u, f, u.atk * e.mult, opt);
             if (e.fx === 'ice') this.addFx({ kind: 'ice', x: f.x, y: f.y, r: 34, color: aura, life: 0.6 });
+            else if (e.fx === 'staff') this.addFx({ kind: 'staff', x: f.x, y: f.y, r: 60, color: aura, life: 0.7 });
             else this.addFx({ kind: 'bolt', x: f.x, y: f.y, life: 0.4, color: aura, big: isUlt });
           };
           if (e.all) {

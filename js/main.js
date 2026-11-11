@@ -338,6 +338,18 @@
   const oldAct = prog.act && typeof prog.act === 'object' ? prog.act : {};
   prog.act = Object.assign(ACT_DEF(), oldAct);
   for (const k of ['seal', 'cleared', 'ults', 'heroKills', 'tasks']) prog.act[k] = Object.assign({}, oldAct[k] || {});
+  // 求贤（抽皮肤）：新档送 3 枚求贤令；owned 已有皮肤，equip { 英雄: 皮肤 id }
+  const oldQx = prog.qx && typeof prog.qx === 'object' ? prog.qx : { tokens: 3 };
+  prog.qx = Object.assign({ tokens: 0, yayun: 0, pity: 0, draws: 0, freeDay: '', owned: {}, equip: {} }, oldQx);
+  prog.qx.owned = Object.assign({}, oldQx.owned || {});
+  prog.qx.equip = Object.assign({}, oldQx.equip || {});
+  for (const [h, id] of Object.entries(prog.qx.equip)) if (!prog.qx.owned[id] || !JQ.SKIN_BY_ID[id] || JQ.SKIN_BY_ID[id].hero !== h) delete prog.qx.equip[h];
+  // 立绘：穿戴的皮肤图 + 突破过的英雄解锁原版立绘
+  const syncSkinArt = () => {
+    JQ.setSkinArt(Object.fromEntries(Object.entries(prog.qx.equip).map(([h, id]) => [h, JQ.SKIN_BY_ID[id].art])));
+    JQ.setPortraitUnlock(Object.keys(prog.brk || {}).filter((h) => prog.brk[h] > 0));
+  };
+  syncSkinArt();
   const saveProg = () => localStorage.setItem(PROG_KEY, JSON.stringify(prog));
   saveProg();
   const lvNeed = (lv) => 100 + 40 * (lv - 1);
@@ -371,7 +383,7 @@
   function grantProgress(g, win) {
     const s = g.sides[0];
     const stage = g.stage || 1;
-    const out = { xp: 0, lvUps: 0, coins: 0, stars: 0, newStars: 0, chest: 0, mainUsed: !!(prog.main && s.stats.heroLv[prog.main]) };
+    const out = { xp: 0, lvUps: 0, coins: 0, stars: 0, newStars: 0, chest: 0, tokens: 0, mainUsed: !!(prog.main && s.stats.heroLv[prog.main]) };
     out.xp = win ? 60 + 2 * Math.min(100, stage) : 25 + Math.min(60, stage);
     out.coins = win ? 40 + Math.min(110, stage) : 15 + Math.min(30, Math.floor(stage / 2));
     if (g.R.waves) (out.xp = 20 + 8 * Math.max(0, g.wave - 1)), (out.coins = 10 + 5 * Math.max(0, g.wave - 1));
@@ -382,7 +394,9 @@
       prog.lv++;
       out.lvUps++;
       out.coins += 100;
+      out.tokens += 2; // 主公升级送 2 枚求贤令
     }
+    if (win) out.tokens += 1; // 每赢一局 1 枚求贤令
     if (win && (g.modeKey === 'classic' || g.modeKey === 'fate')) {
       const f = s.hp / s.maxHp;
       out.stars = f >= 0.7 ? 3 : f >= 0.4 ? 2 : 1;
@@ -391,8 +405,9 @@
       md[stage] = Math.max(md[stage] || 0, out.stars);
     }
     // 每攒 10 颗关卡星开一个宝箱：150 铜钱
-    while (Math.floor(totalStars() / 10) > prog.chests) (prog.chests++, (out.coins += 150), out.chest++);
+    while (Math.floor(totalStars() / 10) > prog.chests) (prog.chests++, (out.coins += 150), out.chest++, out.tokens++);
     prog.coins += out.coins;
+    prog.qx.tokens += out.tokens;
     saveProg();
     return out;
   }
@@ -400,13 +415,19 @@
   // ---------- 突破活动：活动关卡 / 活动任务 / 材料 / 三突 ----------
   const ACT = JQ.BREAKTHROUGH;
   let activityStage = null; // 非空 = 下一局从这关活动关卡进入（再战也沿用）
-  let actTab = 'brk', actHero = ACT.heroes[0], brkAnim = null;
+  let actTab = 'brk', actHero = ACT.heroes[0], brkAnim = null, brkSel = 0, actHelp = false;
+  const BRK_ART = {
+    吕布: ['skill_lvbu_1', 'skill_lvbu_2', 'skill_lvbu_3'],
+    悟空: ['skill_wukong_1', 'skill_wukong_2', 'skill_wukong_3'],
+    岳飞: ['skill_yuefei_1', 'skill_yuefei_2', 'skill_yuefei_3'],
+  };
   const actStageOf = (id) => ACT.stageById[id] || null;
   function openActivity(tab) {
     JQ.preloadOrnaments();
     JQ.preloadUiArt();
     if (tab) actTab = tab;
     if (!ACT.byHero[actHero]) actHero = ACT.heroes[0];
+    brkSel = Math.min(2, brkOf(actHero));
     screen = 'activity';
   }
   function addActReward(stone, seal, hero) {
@@ -461,6 +482,7 @@
     prog.act.seal[name] = (prog.act.seal[name] || 0) - cost.seal;
     prog.brk[name] = from + 1;
     saveProg();
+    syncSkinArt();
     return { ok: true, from, to: from + 1, cost, title: ACT.byHero[name].levels[from].title };
   }
   function doBreakthrough(name) {
@@ -479,6 +501,96 @@
     newGame();
   }
   const brkTotal = () => ACT.heroes.reduce((n, h) => n + brkOf(h), 0);
+
+  // ---------- 求贤：抽皮肤 ----------
+  // 皮肤只换外观和一个技能/大招，不加强度；求贤令只靠玩游戏拿（每赢一局 1 枚、主公升级 2 枚、星级宝箱 1 枚、每天免费 1 次）
+  const QX = JQ.QIUXIAN;
+  const qx = () => prog.qx;
+  const today = () => {
+    const d = new Date();
+    return `${d.getFullYear()}-${d.getMonth() + 1}-${d.getDate()}`;
+  };
+  const qxFree = () => qx().freeDay !== today();
+  const skinOwned = (id) => !!qx().owned[id];
+  const skinCount = () => JQ.SKINS.filter((s) => skinOwned(s.id)).length;
+  let qxTab = 'draw', qxAnim = null, qxSel = 0, qxRates = false, qxSkinPick = null, qxSwapAt = 0;
+  // 一抽：先按保底，再按概率表；出皮肤时优先给还没有的，全有了折成雅韵
+  function qxRollOne() {
+    const q = qx();
+    q.pity++;
+    q.draws++;
+    let kind = null;
+    if (q.pity >= QX.pity) kind = 'skin';
+    else {
+      let r = Math.random() * 100;
+      for (const row of QX.table) if ((r -= row.p) < 0) { kind = row.kind; break; }
+      kind = kind || 'coins';
+    }
+    if (kind === 'skin') {
+      q.pity = 0;
+      const pool = JQ.SKINS.filter((s) => !skinOwned(s.id));
+      if (!pool.length) {
+        q.yayun += QX.dupYayun;
+        return { kind: 'skin', dup: true, n: QX.dupYayun, id: JQ.SKINS[Math.floor(Math.random() * JQ.SKINS.length)].id };
+      }
+      const s = pool[Math.floor(Math.random() * pool.length)];
+      q.owned[s.id] = true;
+      if (!q.equip[s.hero]) q.equip[s.hero] = s.id; // 第一款皮肤自动穿上
+      return { kind: 'skin', id: s.id };
+    }
+    const row = QX.table.find((x) => x.kind === kind);
+    const n = row.n[0] + Math.floor(Math.random() * (row.n[1] - row.n[0] + 1));
+    if (kind === 'yayun') q.yayun += n;
+    else if (kind === 'coins') prog.coins += n;
+    else if (kind === 'stone') prog.act.stone += n;
+    else if (kind === 'seal') {
+      const h = ACT.heroes[Math.floor(Math.random() * ACT.heroes.length)];
+      prog.act.seal[h] = (prog.act.seal[h] || 0) + n;
+      return { kind, n, hero: h };
+    }
+    return { kind, n };
+  }
+  // n=1 单抽（今天还没免费就先用免费），n=10 十连
+  function qxDraw(n) {
+    if (qxAnim) return false;
+    const q = qx(), free = n === 1 && qxFree();
+    if (!free && q.tokens < n) return sfx('bad'), qxSay(`求贤令不够：还差 ${n - q.tokens} 枚，每赢一局送 1 枚`), false;
+    if (free) q.freeDay = today();
+    else q.tokens -= n;
+    const res = [];
+    for (let i = 0; i < n; i++) res.push(qxRollOne());
+    saveProg();
+    syncSkinArt();
+    const best = res.some((r) => r.kind === 'skin' && !r.dup);
+    for (const r of res) if (r.kind === 'skin') JQ.preloadArt(JQ.SKIN_BY_ID[r.id].art);
+    qxAnim = { res, t0: performance.now(), best, shown: -1, skinShow: res.findIndex((r) => r.kind === 'skin' && !r.dup) };
+    playQxVideo();
+    sfx('recruit');
+    buzz(30);
+    return true;
+  }
+  function qxExchange(id) {
+    const q = qx();
+    if (skinOwned(id) || q.yayun < QX.exchange) return sfx('bad'), false;
+    q.yayun -= QX.exchange;
+    q.owned[id] = true;
+    const s = JQ.SKIN_BY_ID[id];
+    if (!q.equip[s.hero]) q.equip[s.hero] = id;
+    saveProg();
+    syncSkinArt();
+    sfx('breakthrough');
+    qxAnim = { res: [{ kind: 'skin', id }], t0: performance.now() - 1500, best: true, shown: -1, skinShow: 0 };
+    return true;
+  }
+  function equipSkin(hero, id) {
+    const q = qx();
+    if (id && !skinOwned(id)) return sfx('bad');
+    if (!id || q.equip[hero] === id) delete q.equip[hero];
+    else q.equip[hero] = id;
+    saveProg();
+    syncSkinArt();
+    sfx('tap');
+  }
 
   // 本局 MVP：输出最高的英雄 + 输出最高的兵种
   function mvpOf(g) {
@@ -513,10 +625,13 @@
       seed: seedV, difficulty, mode: gameMode, pack: usePack, enemyPack: act ? act.enemyPack : undefined,
       talents, enemyBoost, stage, skillToast, aiProfile: JQ.aiProfile(difficulty, player),
       mainHero: prog.main ? { name: prog.main, lv: heroLvOf(prog.main) } : null,
-      breakthrough: prog.brk, activity: act ? act.id : null,
+      breakthrough: prog.brk, skins: Object.assign({}, prog.qx.equip), activity: act ? act.id : null,
       startHeroName: act ? act.hero : null, startHeroLv: act ? 3 : 1,
     });
     window.__jqGame = game; // 调试/性能测试用
+    // 经典第 1 关第一次玩：新手引导（?tut=1 强制重看）
+    tut = null;
+    if (!act && mode === 'classic' && stage === 1 && !AUTO && (localStorage.getItem(TUT_KEY) !== '1' || /[?&]tut=1/.test(location.search))) startTutorial();
     actions = 0;
     lastReward = null;
     lastProg = null;
@@ -526,6 +641,7 @@
       if (d && d.side === 0 && (ev === 'place' || ev === 'recruit' || ev === 'sell' || ev === 'item')) actions++;
       if (ev === 'outpostLost' && d.side === 0) say('前哨失守！卡已退回备战席', 2);
       if (ev === 'recruit' && d.side === 0) (sfx('recruit'), (view.shopAnim = performance.now()));
+      tutEvent(ev, d);
       if (ev === 'place' && d.side === 0) {
         sfx(d.how === 'merge' ? 'merge' : 'place');
         buzz(d.how === 'merge' ? 18 : 8);
@@ -773,6 +889,7 @@
       }
       return;
     }
+    if (tutTap(p)) return;
     if (game.over) return;
     if (inRect(p, UI.pause)) return (screen = 'paused');
     if (inRect(p, UI.speed)) return (view.speed = view.speed === 1 ? 2 : 1);
@@ -926,18 +1043,8 @@
       g.save();
       const pk = pressK(x, y);
       if (pk !== 1) (g.translate(x + w / 2, y + h / 2), g.scale(pk, pk), g.translate(-(x + w / 2), -(y + h / 2)));
-      JQ.rr(g, x, y, w, h, 8);
-      if (opts.on) {
-        const grd = g.createLinearGradient(0, y, 0, y + h);
-        grd.addColorStop(0, '#ffe08a');
-        grd.addColorStop(1, '#d08a26');
-        g.fillStyle = grd;
-      } else g.fillStyle = opts.disabled ? 'rgba(40,32,24,0.85)' : '#4a3020';
-      g.fill();
-      g.lineWidth = opts.on ? 2.5 : 1.5;
-      g.strokeStyle = opts.disabled ? 'rgba(160,140,110,0.35)' : '#c9a35a';
-      g.stroke();
-      text(g, label, x + w / 2, y + h / 2 + 1, Math.min(opts.size || 18, h * 0.5), opts.on ? '#3a2008' : opts.disabled ? '#7a6e5c' : '#f0e0c0');
+      card(x, y, w, h, { on: opts.on, dim: opts.disabled, red: !opts.on && !opts.disabled && !opts.flat, r: 10 });
+      text(g, label, x + w / 2, y + h / 2 + 1, Math.min(opts.size || 18, h * 0.5), opts.on ? '#3a2008' : opts.disabled ? '#7a6e5c' : '#fff1d8', opts.on || opts.disabled ? undefined : { stroke: 'rgba(20,8,2,0.6)', strokeW: 3 });
       g.restore();
       return;
     }
@@ -990,7 +1097,8 @@
   }
 
   // 二级页面统一外框：木质大面板 + 顶部卷轴标题（素材没加载时退回暗纱+大字）
-  function pageFrame(titleStr, a) {
+  // back：传入时左上角画返回键（页面底部不再单独放「返回」按钮，空间留给内容）
+  function pageFrame(titleStr, a, back) {
     veil(a == null ? 0.78 : a);
     // 面板铺满整屏；卷轴标题最多上移 60，别离内容太远
     const top = -Math.min(JQ.VIEW.top, 60), sy = -JQ.VIEW.top, sb = C.H + JQ.VIEW.bot;
@@ -1001,6 +1109,68 @@
     g.fill();
     JQ.ui3(g, 'scroll', C.W / 2 - 200, top + 2, 400, 78, 70);
     text(g, titleStr, C.W / 2, top + 42, 32, '#3a2008');
+    if (back) backBtn(back);
+  }
+  const pageTop = () => -Math.min(JQ.VIEW.top, 60);
+  const pageBottom = () => C.H + JQ.VIEW.bot - 34; // 内容可用到的最低处（面板内沿）
+  // 左上角返回键：朱漆圆钮 + 金色箭头（右上角留给微信胶囊）
+  function backBtn(fn) {
+    const s = 56, x = 26, y = pageTop() + 14, k = pressK(x, y);
+    buttons.push({ x: x - 8, y: y - 8, w: s + 16, h: s + 16, fn });
+    g.save();
+    g.translate(x + s / 2, y + s / 2);
+    g.scale(k, k);
+    g.beginPath();
+    g.arc(0, 2, s / 2, 0, Math.PI * 2);
+    g.fillStyle = 'rgba(0,0,0,0.35)';
+    g.fill();
+    g.beginPath();
+    g.arc(0, 0, s / 2, 0, Math.PI * 2);
+    const grd = g.createLinearGradient(0, -s / 2, 0, s / 2);
+    grd.addColorStop(0, '#a8402a');
+    grd.addColorStop(1, '#5a160a');
+    g.fillStyle = grd;
+    g.fill();
+    g.lineWidth = 2.5;
+    g.strokeStyle = '#f0c878';
+    g.stroke();
+    g.strokeStyle = '#ffe9a0';
+    g.lineWidth = 5;
+    g.lineCap = 'round';
+    g.lineJoin = 'round';
+    g.beginPath();
+    g.moveTo(5, -12);
+    g.lineTo(-7, 0);
+    g.lineTo(5, 12);
+    g.stroke();
+    g.restore();
+  }
+  // 卡片容器：漆木渐变 + 顶部高光 + 底部投影；on=选中（金边+亮底），dim=不可用
+  function card(x, y, w, h, opts) {
+    opts = opts || {};
+    const r = opts.r == null ? 12 : opts.r;
+    g.save();
+    JQ.rr(g, x, y + 3, w, h, r);
+    g.fillStyle = 'rgba(0,0,0,0.38)';
+    g.fill();
+    JQ.rr(g, x, y, w, h, r);
+    const grd = g.createLinearGradient(0, y, 0, y + h);
+    if (opts.on) (grd.addColorStop(0, '#ffe7a6'), grd.addColorStop(1, '#d99a3a'));
+    else if (opts.red) (grd.addColorStop(0, '#9a3420'), grd.addColorStop(1, '#5a1608'));
+    else if (opts.dim) (grd.addColorStop(0, 'rgba(44,34,26,0.92)'), grd.addColorStop(1, 'rgba(28,22,17,0.92)'));
+    else (grd.addColorStop(0, opts.light ? '#7a5634' : '#5e3f26'), grd.addColorStop(1, opts.light ? '#4a3018' : '#38240f'));
+    g.fillStyle = grd;
+    g.fill();
+    g.lineWidth = opts.on ? 2.5 : 1.2;
+    g.strokeStyle = opts.on ? '#fff0b8' : opts.dim ? 'rgba(120,100,80,0.45)' : 'rgba(230,190,120,0.55)';
+    g.stroke();
+    // 顶部内高光
+    if (!opts.dim) {
+      JQ.rr(g, x + 3, y + 2, w - 6, Math.min(h * 0.45, 26), Math.max(2, r - 3));
+      g.fillStyle = opts.on ? 'rgba(255,255,240,0.35)' : 'rgba(255,230,180,0.08)';
+      g.fill();
+    }
+    g.restore();
   }
 
   function title(s, y, size, color) {
@@ -1009,9 +1179,8 @@
     text(g, s, C.W / 2, y, size, color, { stroke: dark ? '#f5ead0' : '#1a1008', strokeW: size / 8 });
   }
 
-  let menuGame = null, menuPop = (location.search.match(/[?&]pop=(\w+)/) || [])[1] || null; // menuPop：'settings' 设置弹窗 / 'packs' 卡包抽屉
-  const menuView = { g, speed: 1, selected: -1, anims: [], noHud: true }; // 背景演示局不画 HUD
-  const MENU_PACKS = ['sanguo', 'xiyou', 'tang', 'custom', 'xuanhuan', 'mofa', 'song'];
+  let menuPop = (location.search.match(/[?&]pop=(\w+)/) || [])[1] || null; // menuPop：'settings' 设置弹窗 / 'packs' 卡包抽屉
+  const MENU_PACKS = ['sanguo', 'xiyou', 'tang', 'song', 'custom', 'xuanhuan', 'mofa']; // 已开放的排前面，未解锁的收在最后
   const PACK_ART = {}; // 卡包封面图（AI 生图），没有的卡包画大字
   const PACK_FOCUS = { sanguo: 0.55, xiyou: 0.62, song: 0.55 }; // 竖图裁成横幅时取景的高度位置（0 顶 ~ 1 底），默认 0.4
   for (const k of ['sanguo', 'xiyou', 'tang', 'song', 'custom']) {
@@ -1112,178 +1281,290 @@
     g.restore();
   }
   let menuShade = null;
-  // 主菜单中部的突破活动横幅
-  function drawActivityBanner(y) {
-    const x = 70, w = 580, h = 88;
-    buttons.push({ x, y, w, h, fn: () => openActivity('brk') });
+  // 主菜单两侧的悬浮入口（手游常见的活动/福利入口）：圆底 + 图标 + 名字，有可领/可抽时带红点
+  function drawSideEntry(x, y, label, icon, fn, dot) {
+    const s = 84;
+    buttons.push({ x, y, w: s, h: s + 26, fn });
     const k = pressK(x, y);
     g.save();
-    g.translate(x + w / 2, y + h / 2);
+    g.translate(x + s / 2, y + s / 2);
     g.scale(k, k);
-    g.translate(-(x + w / 2), -(y + h / 2));
-    const pulse = 0.55 + 0.25 * Math.sin(performance.now() / 420);
-    g.shadowColor = 'rgba(255,190,80,' + pulse + ')';
-    g.shadowBlur = 18;
-    panel(x, y, w, h, 'rgba(52,14,8,0.86)', 'rgba(235,190,100,0.9)', 2.5);
-    g.shadowBlur = 0;
-    // 左侧破界图标（生成素材没加载时画一道裂开的金石，不再用「破」字）
-    if (!JQ.iconDraw(g, 'breakthrough', x + 12, y + 10, 68, 68)) {
-      JQ.rr(g, x + 18, y + 14, 56, 56, 12);
-      g.fillStyle = '#5a1a10';
+    g.translate(-(x + s / 2), -(y + s / 2));
+    const glow = 0.45 + 0.25 * Math.sin(performance.now() / 380);
+    g.beginPath();
+    g.arc(x + s / 2, y + s / 2, s / 2, 0, Math.PI * 2);
+    const grd = g.createRadialGradient(x + s / 2, y + s * 0.4, 4, x + s / 2, y + s / 2, s / 2);
+    grd.addColorStop(0, 'rgba(120,46,20,0.95)');
+    grd.addColorStop(1, 'rgba(40,16,8,0.92)');
+    g.fillStyle = grd;
+    g.fill();
+    g.strokeStyle = `rgba(255,210,120,${0.55 + glow * 0.5})`;
+    g.lineWidth = 2.5;
+    g.stroke();
+    icon(x + 12, y + 8, s - 24);
+    JQ.rr(g, x - 4, y + s - 14, s + 8, 28, 14);
+    g.fillStyle = 'rgba(140,30,16,0.95)';
+    g.fill();
+    g.strokeStyle = 'rgba(255,215,140,0.8)';
+    g.lineWidth = 1.2;
+    g.stroke();
+    text(g, label, x + s / 2, y + s, 17, '#fff1d0', { stroke: '#3a0a04', strokeW: 3 });
+    if (dot) {
+      g.beginPath();
+      g.arc(x + s - 8, y + 10, 10, 0, Math.PI * 2);
+      g.fillStyle = '#e8321e';
       g.fill();
-      g.strokeStyle = '#f0c878';
+      g.strokeStyle = '#fff1d0';
       g.lineWidth = 2;
       g.stroke();
-      g.strokeStyle = '#ffd86a';
-      g.lineWidth = 3;
-      g.beginPath();
-      g.moveTo(x + 38, y + 24);
-      g.lineTo(x + 48, y + 40);
-      g.lineTo(x + 40, y + 46);
-      g.lineTo(x + 52, y + 62);
-      g.stroke();
-      g.fillStyle = '#ffcf5a';
-      g.beginPath();
-      g.arc(x + 58, y + 28, 4, 0, Math.PI * 2);
-      g.fill();
     }
-    text(g, '突破活动 · 第一期', x + 92, y + 30, 25, '#ffe9a0', { align: 'left', stroke: '#2a1a08', strokeW: 4 });
-    text(g, '吕布 · 悟空 · 岳飞　字饰 / 技能进化', x + 92, y + 60, 14, '#f0d8a8', { align: 'left', font: 'sans-serif', bold: false });
-    const seals = ACT.heroes.map((n) => `${n[0]}${brkOf(n)}`).join(' ');
-    text(g, `已突破 ${brkTotal()}/9`, x + w - 18, y + 30, 16, '#ffcf5a', { align: 'right', font: 'sans-serif' });
-    text(g, seals, x + w - 18, y + 58, 12, '#d8b888', { align: 'right', font: 'sans-serif', bold: false });
     g.restore();
   }
+  // ---------- 大厅（2026-11-11 改版）----------
+  // 参考热门手游/小游戏大厅：顶部资源条（右上留给微信胶囊）、中间本命将立绘、两侧悬浮入口带红点、
+  // 下方关卡牌 + 卡包 + 开战，底栏五个入口、中间「求贤」凸起。不再在背景跑一局 AI 对打（省电）。
+  const lobbyCache = {}; // 本命将立绘的柔边缓存：key = 立绘文件
+  function lobbyPortrait(name) {
+    const file = JQ.portraitFile(name);
+    if (!file) return null;
+    if (lobbyCache[file]) return lobbyCache[file];
+    if (!JQ.artReady(file)) return null; // 图还没下完：别每帧新建画布
+    const W = 480, H = 640, c = document.createElement('canvas');
+    c.width = W;
+    c.height = H;
+    const cg = c.getContext('2d');
+    if (!JQ.portraitDraw(cg, name, 0, 0, W, H, { file })) return null;
+    // 四周羽化：上下左右渐隐，像从画卷里浮出来
+    cg.globalCompositeOperation = 'destination-in';
+    const v = cg.createLinearGradient(0, 0, 0, H);
+    v.addColorStop(0, 'rgba(0,0,0,0)');
+    v.addColorStop(0.1, 'rgba(0,0,0,1)');
+    v.addColorStop(0.72, 'rgba(0,0,0,1)');
+    v.addColorStop(1, 'rgba(0,0,0,0)');
+    cg.fillStyle = v;
+    cg.fillRect(0, 0, W, H);
+    const h = cg.createLinearGradient(0, 0, W, 0);
+    h.addColorStop(0, 'rgba(0,0,0,0)');
+    h.addColorStop(0.14, 'rgba(0,0,0,1)');
+    h.addColorStop(0.86, 'rgba(0,0,0,1)');
+    h.addColorStop(1, 'rgba(0,0,0,0)');
+    cg.fillStyle = h;
+    cg.fillRect(0, 0, W, H);
+    return (lobbyCache[file] = c);
+  }
+  function drawLobbyHero(now) {
+    const name = prog.main;
+    const x = 140, y = 262, w = 440, h = 586;
+    buttons.push({ x: x + 40, y: y + 40, w: w - 80, h: h - 80, fn: () => openMainHero() });
+    // 立绘后的光轮
+    JQ.fxSprite(g, 'rays', C.W / 2, y + h * 0.42, 620, 620, 0.22, now / 12000);
+    if (!name) {
+      // 还没有本命将：三位活动英雄并排当推荐
+      ACT.heroes.forEach((n, i) => {
+        const c = lobbyPortrait(n);
+        if (c) (g.save(), (g.globalAlpha = 0.85), g.drawImage(c, 150 + i * 140 - 70, 330, 280, 373), g.restore());
+      });
+      text(g, '点这里挑一位本命将', C.W / 2, 760, 24, '#ffe9a0', { stroke: '#2a1a08', strokeW: 5 });
+      text(g, '只养一位：用铜钱升级，出战更强', C.W / 2, 794, 14, '#e8dcc0', { font: 'sans-serif', bold: false });
+      return;
+    }
+    const c = lobbyPortrait(name), bob = Math.sin(now / 1400) * 4;
+    if (c) g.drawImage(c, x, y + bob, w, h);
+    else {
+      // 立绘还没加载：大字 + 字饰
+      JQ.drawOrnament(g, name, C.W / 2, y + h * 0.45, 150, { tier: brkOf(name), behind: true });
+      text(g, HEROES[name].chars[0], C.W / 2, y + h * 0.32, 150, '#2a1a08', { stroke: '#f5ead0', strokeW: 8 });
+      text(g, HEROES[name].chars[1], C.W / 2, y + h * 0.58, 150, '#2a1a08', { stroke: '#f5ead0', strokeW: 8 });
+      JQ.drawOrnament(g, name, C.W / 2, y + h * 0.45, 150, { tier: brkOf(name), behind: false });
+    }
+    // 竖排名牌（右上）
+    const px = x + w - 66, py = y + 30;
+    JQ.rr(g, px, py, 46, 34 + 40 * name.length, 6);
+    g.fillStyle = 'rgba(243,234,211,0.94)';
+    g.fill();
+    g.strokeStyle = '#8a2a14';
+    g.lineWidth = 2;
+    g.stroke();
+    [...name].forEach((ch, i) => text(g, ch, px + 23, py + 34 + i * 40, 32, '#2a1008'));
+    const sk = qx().equip[name] && JQ.SKIN_BY_ID[qx().equip[name]];
+    if (sk) text(g, sk.name, px + 23, py + 50 + 40 * name.length, 11, '#ffd9a0', { font: 'sans-serif', stroke: '#2a1008', strokeW: 3 });
+    // 底部：本命 Lv / 突破 / 去培养
+    const lv = heroLvOf(name), cap = heroCap(name), can = lv < cap && prog.coins >= upCost(lv);
+    const tx = C.W / 2, ty = y + h - 30;
+    JQ.rr(g, tx - 170, ty - 22, 340, 44, 22);
+    g.fillStyle = 'rgba(24,14,8,0.82)';
+    g.fill();
+    g.strokeStyle = 'rgba(230,194,122,0.7)';
+    g.lineWidth = 1.5;
+    g.stroke();
+    text(g, `本命将 Lv${lv}` + (ACT.byHero[name] ? ` · 突破 ${brkOf(name)}/3` : ''), tx - 18, ty + 1, 18, '#ffe9a0', { font: 'sans-serif' });
+    text(g, '培养 ›', tx + 156, ty + 1, 14, can ? '#ffd23f' : '#c8b090', { align: 'right', font: 'sans-serif' });
+    if (can) redDot(tx + 164, ty - 18);
+  }
+  function redDot(x, y, r) {
+    g.beginPath();
+    g.arc(x, y, r || 9, 0, Math.PI * 2);
+    g.fillStyle = '#e8321e';
+    g.fill();
+    g.strokeStyle = '#fff1d0';
+    g.lineWidth = 2;
+    g.stroke();
+  }
+  // 顶部资源胶囊：图标 + 数值，可点
+  function resPill(x, y, w, icon, val, fn) {
+    if (fn) buttons.push({ x, y, w, h: 40, fn });
+    JQ.rr(g, x, y, w, 40, 20);
+    g.fillStyle = 'rgba(18,11,6,0.72)';
+    g.fill();
+    g.strokeStyle = 'rgba(230,194,122,0.55)';
+    g.lineWidth = 1.2;
+    g.stroke();
+    icon(x + 3, y + 2, 36);
+    text(g, String(val), x + 44, y + 21, 18, '#ffe9a0', { align: 'left', font: 'sans-serif', stroke: '#1a1008', strokeW: 3 });
+    if (fn) text(g, '+', x + w - 16, y + 21, 20, '#ffd23f', { font: 'sans-serif' });
+  }
+  const actDot = () =>
+    ACT.heroes.some((h) => {
+      const lv = brkOf(h), c = lv < 3 && JQ.brkCost(h, lv);
+      return c && (prog.act.stone || 0) >= c.stone && (prog.act.seal[h] || 0) >= c.seal;
+    }) || ACT.tasks.some((t) => !prog.act.tasks[t.id] && actTaskProgress(t) >= t.need);
+  const mainDot = () => !!prog.main && heroLvOf(prog.main) < heroCap(prog.main) && prog.coins >= upCost(heroLvOf(prog.main));
   function drawMenu(dt) {
     activityStage = null; // 从活动页/结算回到主菜单后，下一局不再沿用活动关卡
-    // 背景放一局 AI 对打当演示；开局的快进分几帧做完，避免一次卡顿几百毫秒
-    if (!menuGame || menuGame.over) {
-      menuGame = new JQ.Game({ seed: (Math.random() * 1e9) | 0 });
-      menuGame.aiT = [0, 0];
-      menuGame.warm = 60 * 50;
-    }
-    const warmSteps = menuGame.warm > 0 ? Math.min(menuGame.warm, 300) : 0;
-    for (let k = 0; k < warmSteps; k++) {
-      for (const sid of [0, 1]) if ((menuGame.aiT[sid] -= STEP) <= 0) (JQ.aiThink(menuGame, sid), (menuGame.aiT[sid] = 0.9));
-      menuGame.step(STEP);
-    }
-    menuGame.warm -= warmSteps;
-    for (const sid of [0, 1]) if ((menuGame.aiT[sid] -= dt) <= 0) (JQ.aiThink(menuGame, sid), (menuGame.aiT[sid] = 0.9));
-    menuGame.step(dt);
-    JQ.render(menuGame, menuView);
-    // 中间留给背景战斗：整体只压一层薄纱，上下两头再加深一点托住文字
-    veil(0.42);
+    const now = performance.now();
     const top = -JQ.VIEW.top, bot = C.H + JQ.VIEW.bot;
+    if (!JQ.assetCover(g, 'lobby_bg', -padX, top, C.W + 2 * padX, bot - top)) JQ.drawBackdrop(g);
+    // 上下压暗托住界面
     if (!menuShade || menuShade.top !== top || menuShade.bot !== bot) {
-      const a = g.createLinearGradient(0, top, 0, 440);
-      a.addColorStop(0, 'rgba(20,14,6,0.72)');
-      a.addColorStop(0.75, 'rgba(20,14,6,0.45)');
+      const a = g.createLinearGradient(0, top, 0, 300);
+      a.addColorStop(0, 'rgba(20,14,6,0.8)');
       a.addColorStop(1, 'rgba(20,14,6,0)');
-      const b = g.createLinearGradient(0, 800, 0, bot);
+      const b = g.createLinearGradient(0, 760, 0, bot);
       b.addColorStop(0, 'rgba(20,14,6,0)');
-      b.addColorStop(0.3, 'rgba(20,14,6,0.6)');
-      b.addColorStop(1, 'rgba(20,14,6,0.85)');
+      b.addColorStop(0.35, 'rgba(20,14,6,0.7)');
+      b.addColorStop(1, 'rgba(20,14,6,0.9)');
       menuShade = { top, bot, a, b };
     }
     g.fillStyle = menuShade.a;
-    g.fillRect(-padX, top, C.W + 2 * padX, 440 - top);
+    g.fillRect(-padX, top, C.W + 2 * padX, 300 - top);
     g.fillStyle = menuShade.b;
-    g.fillRect(-padX, 800, C.W + 2 * padX, bot - 800);
+    g.fillRect(-padX, 760, C.W + 2 * padX, bot - 760);
+    // 漂浮的金色光点（便宜的氛围）
+    g.save();
+    for (let i = 0; i < 14; i++) {
+      const k = ((now / 9000 + i * 0.137) % 1), px = 120 + ((i * 97) % 480) + Math.sin(now / 1300 + i) * 14, py = 840 - k * 560;
+      g.globalAlpha = Math.sin(k * Math.PI) * 0.55;
+      g.fillStyle = i % 3 ? '#ffd27a' : '#fff1c0';
+      g.beginPath();
+      g.arc(px, py, 1.6 + (i % 3), 0, Math.PI * 2);
+      g.fill();
+    }
+    g.restore();
 
-    iconBtn(16, top + 14, 56, '?', () => ((helpBack = 'menu'), (helpPage = 0), (screen = 'help')));
-    iconBtn(648, top + 14, 56, '⚙', () => (menuPop = 'settings'));
-    // 主公等级 + 关卡星 + 万能将魂
+    drawLobbyHero(now);
+
+    // 顶部：主公头像 + 等级条 + 资源；右侧约 170 宽留给微信小游戏胶囊按钮
     {
-      const bx = 84, by = top + 22;
-      if (JQ.ui2Draw(g, 'badge', bx - 4, by - 14, 34, 39)) text(g, String(prog.lv), bx + 13, by + 4, 15, '#5a1a08');
-      text(g, `主公 Lv${prog.lv}`, bx + 36, by + 6, 17, '#ffe9a0', { align: 'left', stroke: '#2a1a08', strokeW: 3 });
+      const ty = top + 16;
+      buttons.push({ x: 12, y: ty - 4, w: 180, h: 64, fn: () => openMainHero() });
       g.save();
-      JQ.rr(g, bx + 36, by + 20, 130, 7, 3.5);
+      g.beginPath();
+      g.arc(46, ty + 28, 30, 0, Math.PI * 2);
+      g.fillStyle = 'rgba(30,18,10,0.9)';
+      g.fill();
+      g.clip();
+      if (!(prog.main && JQ.portraitDraw(g, prog.main, 16, ty - 2, 60, 80))) JQ.ui2Draw(g, 'badge', 30, ty + 8, 32, 37);
+      g.restore();
+      g.beginPath();
+      g.arc(46, ty + 28, 30, 0, Math.PI * 2);
+      g.strokeStyle = '#e6c27a';
+      g.lineWidth = 2.5;
+      g.stroke();
+      text(g, `主公 Lv${prog.lv}`, 84, ty + 18, 17, '#ffe9a0', { align: 'left', stroke: '#2a1a08', strokeW: 3 });
+      JQ.rr(g, 84, ty + 34, 100, 8, 4);
       g.fillStyle = 'rgba(255,255,255,0.15)';
       g.fill();
-      JQ.rr(g, bx + 36, by + 20, Math.max(4, (130 * prog.xp) / lvNeed(prog.lv)), 7, 3.5);
+      JQ.rr(g, 84, ty + 34, Math.max(4, (100 * prog.xp) / lvNeed(prog.lv)), 8, 4);
       g.fillStyle = '#e6b04a';
       g.fill();
-      g.restore();
-      const sOk = JQ.ui2Draw(g, 'star_on', bx + 236, by - 6, 22, 21);
-      JQ.uiDraw(g, 'coin', bx + 300, by - 6, 20, 20);
-      text(g, (sOk ? '' : '★ ') + `${totalStars()}`, bx + 260, by + 6, 15, '#ffd23f', { align: 'left', font: 'sans-serif', stroke: '#2a1a08', strokeW: 3 });
-      text(g, (sOk ? '' : '铜 ') + `${prog.coins}`, bx + 322, by + 6, 15, '#ffd23f', { align: 'left', font: 'sans-serif', stroke: '#2a1a08', strokeW: 3 });
-      text(g, `下个宝箱 ${10 - (totalStars() % 10)} 星`, bx + 250, by + 25, 11, '#d8c8a0', { align: 'left', font: 'sans-serif', bold: false });
+      resPill(200, ty + 8, 150, (x, y, s) => JQ.uiDraw(g, 'coin', x + 5, y + 5, s - 10, s - 10), prog.coins, null);
+      resPill(360, ty + 8, 160, (x, y, s) => qxIcon(x, y, s), qx().tokens, () => openQiuxian('draw'));
+      const sOk = JQ.ui2Draw(g, 'star_on', 204, ty + 54, 20, 19);
+      text(g, (sOk ? '' : '★ ') + `${totalStars()} · 再 ${10 - (totalStars() % 10)} 星开宝箱`, 228, ty + 64, 12, '#e8dcc0', { align: 'left', font: 'sans-serif', bold: false });
     }
-    title('禁区突围', 110, 92, '#1a1a1a');
-    text(g, '招兵 · 拼格 · 合字成将', C.W / 2, 182, 20, '#f5ead0');
-    segmented(110, 210, 500, 56, Object.entries(JQ.MODES).filter(([k]) => k !== 'breakthrough').map(([k, m]) => [k, m.name]), mode, (k) => {
+    // 标题 + 模式
+    title('禁区突围', 150, 64, '#1a1a1a');
+    segmented(150, 194, 420, 50, Object.entries(JQ.MODES).filter(([k]) => k !== 'breakthrough').map(([k, m]) => [k, m.name]), mode, (k) => {
       mode = k;
       localStorage.setItem('jq_mode', k);
-    }, 26);
-    const M = JQ.MODES[mode];
-    text(g, wrap(M.desc, 40)[0], C.W / 2, 290, 15, '#e8dcc0', { bold: false, font: 'sans-serif' });
+    }, 22);
+
+    // 两侧入口
+    const ui = (id) => (x, y, s) => JQ.uiDraw(g, id, x, y, s, s);
+    drawSideEntry(18, 300, '突破', (x, y, s) => JQ.iconDraw(g, 'breakthrough', x, y, s, s), () => openActivity('brk'), actDot());
+    drawSideEntry(18, 430, '选关', (x, y, s) => JQ.iconDraw(g, 'stage', x, y, s, s), () => (mode === 'endless' ? sfx('bad') : openStages()), false);
+    drawSideEntry(18, 560, '玩法', ui('ic_help'), () => ((helpBack = 'menu'), (helpPage = 0), (screen = 'help')), false);
+    drawSideEntry(618, 300, '设置', ui('ic_gear'), () => (menuPop = 'settings'), false);
+    drawSideEntry(618, 430, '自定义', ui('ic_custom'), () => openCustom(), false);
+    drawSideEntry(618, 560, '测试场', ui('ic_test'), () => openTestLab(), false);
+
+    // 关卡牌
     const r = rec(mode);
     if (mode === 'classic' || mode === 'fate') {
-      const st = stageOf();
-      // 关卡牌：点一下进选关
-      buttons.push({ x: 170, y: 308, w: 380, h: 84, fn: () => openStages() });
-      const k = pressK(170, 308);
-      g.save();
-      g.translate(C.W / 2, 350);
-      g.scale(k, k);
-      g.translate(-C.W / 2, -350);
-      panel(170, 308, 380, 84, 'rgba(25,16,8,0.62)', 'rgba(255,210,120,0.6)', 2);
-      text(g, `第 ${st} 关`, C.W / 2 - 20, 340, 34, '#ffe9a0', { stroke: '#2a1a08', strokeW: 5 });
-      text(g, `/ ${C.MAX_STAGE}`, C.W / 2 + 102, 344, 15, '#bfa878', { font: 'sans-serif', bold: false });
-      text(g, '选关 ›', 532, 341, 14, '#e6c27a', { align: 'right', font: 'sans-serif', bold: false });
-      JQ.rr(g, 200, 368, 320, 8, 4);
-      g.fillStyle = 'rgba(255,220,160,0.18)';
+      const st = stageOf(), x = 150, y = 860, w = 420, h = 56;
+      buttons.push({ x, y, w, h, fn: () => openStages() });
+      panel(x, y, w, h, 'rgba(25,16,8,0.78)', 'rgba(255,210,120,0.6)', 1.6);
+      text(g, `第 ${st} 关`, x + 24, y + 27, 28, '#ffe9a0', { align: 'left', stroke: '#2a1a08', strokeW: 4 });
+      text(g, `/ ${C.MAX_STAGE}`, x + 152, y + 30, 14, '#bfa878', { align: 'left', font: 'sans-serif', bold: false });
+      text(g, `敌强 ×${JQ.stageBoost(st).toFixed(2)}`, x + 300, y + 21, 12, '#d8c8a0', { font: 'sans-serif', bold: false });
+      text(g, `${r.win}胜 ${r.lose}负`, x + 300, y + 39, 12, '#d8c8a0', { font: 'sans-serif', bold: false });
+      text(g, '选关 ›', x + w - 14, y + 29, 14, '#e6c27a', { align: 'right', font: 'sans-serif', bold: false });
+      JQ.rr(g, x + 14, y + h - 7, w - 28, 4, 2);
+      g.fillStyle = 'rgba(255,220,160,0.16)';
       g.fill();
-      JQ.rr(g, 200, 368, Math.max(4, (320 * bestOf()) / C.MAX_STAGE), 8, 4);
+      JQ.rr(g, x + 14, y + h - 7, Math.max(4, ((w - 28) * bestOf()) / C.MAX_STAGE), 4, 2);
       g.fillStyle = '#e6b04a';
       g.fill();
-      g.restore();
-      const info = mode === 'fate'
-        ? `最佳 ${fateSave.best} 关 · ${r.win} 胜 ${r.lose} 负 · 金币 ${fateSave.coins} · 敌强 ×${JQ.stageBoost(st).toFixed(2)}`
-        : `${r.win} 胜 ${r.lose} 负 · 已解锁 ${classicBest} 关 · 敌强 ×${JQ.stageBoost(st).toFixed(2)}`;
-      text(g, info, C.W / 2, 410, 13, '#d8c8a0', { font: 'sans-serif', bold: false });
     } else {
-      panel(210, 308, 300, 64, 'rgba(25,16,8,0.62)', 'rgba(255,210,120,0.6)', 2);
-      text(g, `最佳：第 ${r.best || 0} 波`, C.W / 2, 340, 28, '#ffe9a0', { stroke: '#2a1a08', strokeW: 5 });
-      text(g, `敌军数量 ×${JQ.aiProfile(difficulty, player).wave} · 不限时`, C.W / 2, 392, 13, '#d8c8a0', { font: 'sans-serif', bold: false });
+      panel(190, 860, 340, 56, 'rgba(25,16,8,0.78)', 'rgba(255,210,120,0.6)', 1.6);
+      text(g, `最佳：第 ${r.best || 0} 波`, C.W / 2, 884, 24, '#ffe9a0', { stroke: '#2a1a08', strokeW: 4 });
+      text(g, `敌军数量 ×${JQ.aiProfile(difficulty, player).wave}`, C.W / 2, 906, 11, '#d8c8a0', { font: 'sans-serif', bold: false });
     }
-    drawActivityBanner(442);
+    if (mode === 'fate') {
+      const eq = fateSave.equipped.map((id) => JQ.TALENT_BY_ID[id].name).join('、') || '未装备';
+      buttons.push({ x: 150, y: 918, w: 420, h: 26, fn: () => (screen = 'talents') });
+      text(g, `天赋：${eq} ›`, C.W / 2, 932, 13, '#ffd23f', { font: 'sans-serif' });
+    }
 
-    // 下半屏：卡包 → 开战 → 难度
+    // 卡包 → 开战 → 难度
     const open = MENU_PACKS.filter((k) => JQ.PACKS[k] && JQ.PACKS[k].open && (k !== 'custom' || JQ.customReady()));
     const cyc = (d) => choosePack(open[(open.indexOf(pack) + d + open.length) % open.length]);
     const pk = JQ.PACKS[pack];
-    if (mode === 'fate') {
-      const eq = fateSave.equipped.map((id) => JQ.TALENT_BY_ID[id].name).join('、') || '未装备';
-      button(170, 818, 380, 44, `天赋：${eq}`, () => (screen = 'talents'), { size: 17 });
-    }
-    iconBtn(116, 878, 56, '‹', () => cyc(-1));
-    iconBtn(548, 878, 56, '›', () => cyc(1));
-    buttons.push({ x: 184, y: 874, w: 352, h: 64, fn: () => (menuPop = 'packs') });
+    iconBtn(146, 946, 48, '‹', () => cyc(-1));
+    iconBtn(526, 946, 48, '›', () => cyc(1));
+    buttons.push({ x: 202, y: 944, w: 316, h: 52, fn: () => (menuPop = 'packs') });
     {
-      const k = pressK(184, 874);
+      const k = pressK(202, 944);
       g.save();
-      g.translate(C.W / 2, 906);
+      g.translate(C.W / 2, 970);
       g.scale(k, k);
-      g.translate(-C.W / 2, -906);
-      panel(184, 874, 352, 64, 'rgba(25,16,8,0.7)', 'rgba(255,210,120,0.6)', 2);
-      text(g, '卡包', 222, 906, 16, '#bfa878', { font: 'sans-serif', bold: false });
-      text(g, `${pk.name}（${pk.heroes.length}将）`, C.W / 2 + 16, 905, 26, '#ffe9a0');
-      text(g, '▾', 514, 906, 16, '#e6c27a', { font: 'sans-serif' });
+      g.translate(-C.W / 2, -970);
+      panel(202, 944, 316, 52, 'rgba(25,16,8,0.78)', 'rgba(255,210,120,0.6)', 1.6);
+      text(g, '卡包', 236, 970, 14, '#bfa878', { font: 'sans-serif', bold: false });
+      text(g, `${pk.name}（${pk.heroes.length}将）`, C.W / 2 + 14, 969, 22, '#ffe9a0');
+      text(g, '▾', 500, 970, 14, '#e6c27a', { font: 'sans-serif' });
       g.restore();
     }
     // 开战：最大最亮，带呼吸光
     {
-      const x = 160, y = 956, w = 400, h = 100, k = pressK(x, y);
+      const x = 170, y = 1004, w = 380, h = 84, k = pressK(x, y);
       buttons.push({ x, y, w, h, fn: newGame });
       g.save();
       g.translate(x + w / 2, y + h / 2);
       g.scale(k, k);
       g.shadowColor = '#ffcf5a';
-      g.shadowBlur = 16 + Math.sin(performance.now() / 320) * 10;
-      JQ.rr(g, -w / 2, -h / 2, w, h, 24);
+      g.shadowBlur = 16 + Math.sin(now / 320) * 10;
+      JQ.rr(g, -w / 2, -h / 2, w, h, 22);
       const grd = g.createLinearGradient(0, -h / 2, 0, h / 2);
       grd.addColorStop(0, '#ffe39a');
       grd.addColorStop(0.55, '#f0b443');
@@ -1294,36 +1575,64 @@
       g.lineWidth = 3.5;
       g.strokeStyle = '#5a3a12';
       g.stroke();
-      JQ.rr(g, -w / 2 + 7, -h / 2 + 7, w - 14, h - 14, 18);
+      JQ.rr(g, -w / 2 + 7, -h / 2 + 7, w - 14, h - 14, 16);
       g.strokeStyle = 'rgba(255,248,220,0.55)';
       g.lineWidth = 1.5;
       g.stroke();
-      text(g, '开  战', 0, 3, 48, '#3a2008', { stroke: '#ffeec0', strokeW: 3 });
+      text(g, '开  战', 0, 2, 42, '#3a2008', { stroke: '#ffeec0', strokeW: 3 });
       g.restore();
     }
-    text(g, '难度', 226, 1098, 16, '#bfa878', { font: 'sans-serif', bold: false });
-    segmented(256, 1074, 260, 48, JQ.DIFF_ORDER.map((k) => [k, JQ.DIFF[k].name]), difficulty, (k) => {
+    // 难度：开战按钮下面一行小分段
+    segmented(250, 1094, 220, 36, JQ.DIFF_ORDER.map((k) => [k, JQ.DIFF[k].name]), difficulty, (k) => {
       difficulty = k;
       localStorage.setItem('jq_diff', k);
-    }, 22);
+    }, 17);
 
-    // 底栏：贴屏幕底
-    const nh = 104, ny = Math.max(1134, bot - nh);
+    // 底栏：五个入口，中间「求贤」凸起
+    const nh = 104, ny = Math.max(1140, bot - nh);
     g.save();
-    g.fillStyle = 'rgba(18,13,8,0.86)';
+    g.fillStyle = 'rgba(18,13,8,0.9)';
     g.fillRect(-padX, ny, C.W + 2 * padX, bot - ny);
     g.fillStyle = 'rgba(230,194,122,0.55)';
     g.fillRect(-padX, ny, C.W + 2 * padX, 1.5);
     g.restore();
     const nav = [
-      ['本', '本命将', () => openMainHero()],
-      ['将', '英雄图鉴', () => ((helpBack = 'menu'), (helpPage = 1), (screen = 'help'))],
-      ['兵', '小兵图鉴', () => (screen = 'units')],
-      ['运', '天赋', () => ((mode = 'fate'), localStorage.setItem('jq_mode', 'fate'), (screen = 'talents'))],
-      ['编', '自定义', () => openCustom()],
-      ['试', '测试场', () => openTestLab()],
+      ['本', '本命将', () => openMainHero(), mainDot()],
+      ['将', '英雄图鉴', () => ((helpBack = 'menu'), (helpPage = 1), (screen = 'help')), false],
+      null,
+      ['兵', '小兵图鉴', () => (screen = 'units'), false],
+      ['运', '天赋', () => ((mode = 'fate'), localStorage.setItem('jq_mode', 'fate'), (screen = 'talents')), false],
     ];
-    nav.forEach(([gl, label, fn], i) => navItem(i * 120, ny, 120, nh, gl, label, fn));
+    nav.forEach((it, i) => {
+      if (!it) return;
+      navItem(i * 144, ny, 144, nh, it[0], it[1], it[2]);
+      if (it[3]) redDot(i * 144 + 104, ny + 16);
+    });
+    {
+      // 中间凸起的求贤
+      const cx = C.W / 2, cy = ny + 8, R = 52, k = pressK(cx - R, cy - R);
+      buttons.push({ x: cx - R, y: cy - R, w: 2 * R, h: 2 * R + 40, fn: () => openQiuxian('draw') });
+      g.save();
+      g.translate(cx, cy);
+      g.scale(k, k);
+      g.shadowColor = 'rgba(255,190,80,0.8)';
+      g.shadowBlur = 12 + 6 * Math.sin(now / 400);
+      g.beginPath();
+      g.arc(0, 0, R, 0, Math.PI * 2);
+      const grd = g.createRadialGradient(0, -12, 6, 0, 0, R);
+      grd.addColorStop(0, '#b8401c');
+      grd.addColorStop(1, '#5a160a');
+      g.fillStyle = grd;
+      g.fill();
+      g.shadowBlur = 0;
+      g.strokeStyle = '#ffd98a';
+      g.lineWidth = 3;
+      g.stroke();
+      qxIcon(-34, -40, 68);
+      g.restore();
+      text(g, '求贤', cx, ny + 84, 18, '#ffe9a0', { stroke: '#2a1a08', strokeW: 3 });
+      if (qxFree() || qx().tokens >= QX.ten) redDot(cx + 40, cy - 40, 10);
+    }
 
     if (menuPop === 'settings') drawSettingsPop();
     else if (menuPop === 'packs') drawPacksPop();
@@ -1345,7 +1654,7 @@
   }
   function popBase(x, y, w, h, titleStr) {
     buttons.push({ x: -padX, y: -padY, w: C.W + 2 * padX, h: C.H + 2 * padY, fn: () => (menuPop = null) });
-    veil(0.55);
+    veil(0.72);
     buttons.push({ x, y, w, h, fn: () => {} });
     popFrame(x, y, w, h, titleStr);
     iconBtn(x + w - 50, y - 14, 50, '×', () => (menuPop = null));
@@ -1457,31 +1766,53 @@
   // ---------- 选关 ----------
   let stagePage = 0;
   function openStages() {
-    stagePage = Math.floor((stageOf() - 1) / 100);
+    stagePage = Math.floor((stageOf() - 1) / STAGE_PER);
     screen = 'stages';
   }
+  // 选关：5 章 × 40 关；每格显示关号、星级、锁，每 20 关的「多一将」关用朱红格
+  const STAGE_PER = 40, CHAPTERS = ['一', '二', '三', '四', '五'];
   function drawStages() {
-    if (menuGame) JQ.render(menuGame, menuView);
-    pageFrame(`选关 · 第 ${stageOf()} 关`);
-    text(g, `${JQ.MODES[mode].name} · 已解锁 ${bestOf()} / ${C.MAX_STAGE} 关`, C.W / 2, 135, 17, '#d8c8a0', { font: 'sans-serif', bold: false });
-    const start = stagePage * 100 + 1;
-    for (let i = 0; i < 100; i++) {
+    JQ.drawBackdrop(g);
+    pageFrame(`选关 · 第 ${stageOf()} 关`, 0.78, () => (screen = 'menu'));
+    const stars = prog.stars[mode === 'fate' ? 'fate' : 'classic'] || {};
+    const pages = Math.ceil(C.MAX_STAGE / STAGE_PER);
+    const T = pageTop() + 96;
+    segmented(40, T, 640, 50, CHAPTERS.slice(0, pages).map((c, i) => [i, `第${c}章`]), stagePage, (k) => (stagePage = k), 19);
+    const got = Object.values(stars).reduce((a, b) => a + b, 0);
+    text(g, `${JQ.MODES[mode].name} · 已解锁 ${bestOf()} / ${C.MAX_STAGE} 关 · 共 ${got} 星`, C.W / 2, T + 74, 16, '#e8d8b0', { font: 'sans-serif', bold: false });
+    const top = T + 96, bot = pageBottom() - 8, rows = 8, cols = 5, gap = 10;
+    const tw = (640 - gap * (cols - 1)) / cols, th = Math.min(132, (bot - top - gap * (rows - 1)) / rows);
+    const start = stagePage * STAGE_PER + 1;
+    for (let i = 0; i < STAGE_PER; i++) {
       const n = start + i;
       if (n > C.MAX_STAGE) break;
-      const col = i % 10, row = Math.floor(i / 10);
-      button(32 + col * 66, 170 + row * 64, 60, 54, String(n), () => {
-        setStage(n);
-        screen = 'menu';
-      }, { flat: true, on: n === stageOf(), disabled: n > bestOf(), size: n > 99 ? 17 : 19 });
+      const x = 40 + (i % cols) * (tw + gap), y = top + Math.floor(i / cols) * (th + gap);
+      const locked = n > bestOf(), cur = n === stageOf(), boss = n % 20 === 0, st = stars[n] || 0;
+      buttons.push({ x, y, w: tw, h: th, fn: locked ? () => sfx('bad') : () => (setStage(n), (screen = 'menu')) });
+      const k = pressK(x, y);
+      g.save();
+      g.translate(x + tw / 2, y + th / 2);
+      g.scale(k, k);
+      g.translate(-(x + tw / 2), -(y + th / 2));
+      card(x, y, tw, th, { on: cur, dim: locked, red: boss && !locked && !cur });
+      if (locked) {
+        if (!JQ.uiDraw(g, 'lock', x + tw / 2 - 16, y + th / 2 - 30, 32, 32)) text(g, '锁', x + tw / 2, y + th / 2 - 12, 20, '#7a6e5c');
+        text(g, String(n), x + tw / 2, y + th - 20, 18, '#7a6e5c', { font: 'sans-serif' });
+      } else {
+        text(g, String(n), x + tw / 2, y + th * 0.4, 32, cur ? '#3a2008' : '#fff1d8', cur ? undefined : { stroke: '#1a0c04', strokeW: 4 });
+        for (let s2 = 0; s2 < 3; s2++) {
+          const sx = x + tw / 2 + (s2 - 1) * 24, sy = y + th * 0.74;
+          if (!JQ.ui2Draw(g, s2 < st ? 'star_on' : 'star_off', sx - 10, sy - 10, 20, 19)) text(g, '★', sx, sy, 17, s2 < st ? '#ffd23f' : 'rgba(255,255,255,0.18)');
+        }
+        if (boss) text(g, '多一将', x + tw - 8, y + 14, 11, cur ? '#7a2008' : '#ffd9a0', { align: 'right', font: 'sans-serif' });
+        if (cur) text(g, '当前', x + 10, y + 14, 11, '#7a2008', { align: 'left', font: 'sans-serif' });
+      }
+      g.restore();
     }
-    button(110, 840, 200, 56, '上一页', () => (stagePage = Math.max(0, stagePage - 1)), { flat: true, disabled: stagePage === 0, size: 20 });
-    button(410, 840, 200, 56, '下一页', () => (stagePage = Math.min(1, stagePage + 1)), { flat: true, disabled: stagePage === 1, size: 20 });
-    text(g, `第 ${stagePage + 1} / 2 页`, C.W / 2, 920, 16, '#bfb39a', { font: 'sans-serif', bold: false });
-    button(210, 1150, 300, 64, '返 回', () => (screen = 'menu'), { size: 26 });
   }
 
   // ---------- 自定义卡包 ----------
-  let customHeroes = [], customUnits = [], customMsg = '';
+  let customHeroes = [], customUnits = [], customMsg = '', customTab = 'sanguo';
   function openCustom() {
     customHeroes = JQ.PACKS.custom.heroes.slice();
     customUnits = JQ.PACKS.custom.units.slice();
@@ -1508,75 +1839,79 @@
     saveCustom();
   }
   function drawCustom() {
-    if (menuGame) JQ.render(menuGame, menuView);
-    pageFrame('自定义卡包');
+    JQ.drawBackdrop(g);
+    pageFrame('自定义卡包', 0.78, () => (screen = 'menu'));
     JQ.preloadUiArt();
-    // 顶部卡包封面：用已有竖图裁成横幅，压暗后叠选择进度
+    const T = pageTop() + 96, B = pageBottom();
+    // 顶部横幅：封面 + 两个大计数
     {
-      const x = 40, y = 86, w = 640, h = 112, im = PACK_ART.custom;
+      const x = 24, y = T, w = 672, h = 120, im = PACK_ART.custom;
       g.save();
-      JQ.rr(g, x, y, w, h, 12);
+      JQ.rr(g, x, y, w, h, 14);
       g.clip();
       g.fillStyle = '#24160c';
       g.fillRect(x, y, w, h);
       if (im && im.complete && im.naturalWidth) {
-        const br = w / h, ir = im.naturalWidth / im.naturalHeight;
-        let sx = 0, sy = 0, sw = im.naturalWidth, sh = im.naturalHeight;
-        if (ir > br) (sw = im.naturalHeight * br), (sx = (im.naturalWidth - sw) / 2);
-        else (sh = im.naturalWidth / br), (sy = (im.naturalHeight - sh) * 0.35);
-        g.drawImage(im, sx, sy, sw, sh, x, y, w, h);
+        const sh = im.naturalWidth / (w / h);
+        g.drawImage(im, 0, (im.naturalHeight - sh) * 0.35, im.naturalWidth, sh, x, y, w, h);
       }
-      const grd = g.createLinearGradient(0, y, 0, y + h);
-      grd.addColorStop(0, 'rgba(16,10,6,0.2)');
-      grd.addColorStop(1, 'rgba(16,10,6,0.85)');
+      const grd = g.createLinearGradient(x, 0, x + w, 0);
+      grd.addColorStop(0, 'rgba(16,10,6,0.85)');
+      grd.addColorStop(1, 'rgba(16,10,6,0.2)');
       g.fillStyle = grd;
       g.fillRect(x, y, w, h);
       g.restore();
-      text(g, '自 选 卡 包', x + 20, y + 32, 24, '#ffe9a0', { align: 'left', stroke: '#1a1008', strokeW: 4 });
-      text(g, `英雄 ${customHeroes.length}/16 · 小兵 ${customUnits.length}/6-12`, x + 20, y + 62, 15, customValid() ? '#9fe0a0' : '#ffb090', { align: 'left', font: 'sans-serif', bold: false });
-      // 右侧 16 个小字格，直观显示已选英雄
-      for (let i = 0; i < 16; i++) {
-        const n = customHeroes[i];
-        const bx = x + w - 8 * 26 - 14 + (i % 8) * 26, by = y + 50 + Math.floor(i / 8) * 26;
-        JQ.rr(g, bx, by, 22, 22, 4);
-        g.fillStyle = n ? 'rgba(243,234,211,0.92)' : 'rgba(20,14,8,0.55)';
-        g.fill();
-        g.strokeStyle = n ? 'rgba(240,200,120,0.8)' : 'rgba(180,150,100,0.25)';
-        g.lineWidth = 1;
-        g.stroke();
-        if (n) text(g, HEROES[n].chars[0], bx + 11, by + 12, 14, '#2a1a08');
-      }
+      const okH = customHeroes.length === 16, okU = customUnits.length >= 6 && customUnits.length <= 12;
+      JQ.statIcon(g, 'summon', x + 20, y + 22, 76);
+      text(g, `${customHeroes.length}/16`, x + 108, y + 52, 38, okH ? '#ffe08a' : '#ff9a7a', { align: 'left', stroke: '#1a0c04', strokeW: 5 });
+      text(g, '英雄', x + 110, y + 92, 18, '#e8d8b0', { align: 'left' });
+      JQ.statIcon(g, 'atk', x + 290, y + 22, 76);
+      text(g, `${customUnits.length}`, x + 378, y + 52, 38, okU ? '#ffe08a' : '#ff9a7a', { align: 'left', stroke: '#1a0c04', strokeW: 5 });
+      text(g, '小兵 6~12', x + 380, y + 92, 18, '#e8d8b0', { align: 'left' });
     }
-    text(g, '英雄（点选 / 取消）· 16 位里要能凑成羁绊', 18, 220, 14, '#ffd23f', { align: 'left', font: 'sans-serif', bold: false });
-    const heroNames = Object.keys(HEROES);
-    // 英雄多了（65 位）：8 列小格
-    heroNames.forEach((name, i) => {
-      const col = i % 8, row = Math.floor(i / 8);
-      button(16 + col * 86, 234 + row * 52, 80, 46, name, () => toggleCustomHero(name), { flat: true, on: customHeroes.includes(name), size: 17 });
+    segmented(24, T + 136, 672, 50, ['sanguo', 'xiyou', 'tang', 'song', 'custom'].map((k) => [k, JQ.PACKS[k].name]), customTab, (k) => (customTab = k), 19);
+    // 英雄字牌 4x4 + 小兵字牌 8x2，高度按屏幕分配；底部操作条
+    const barH = 96, hy = T + 200, unitH = 2 * 78 + 44, heroH = B - barH - unitH - hy - 10;
+    const packHeroes = ((JQ.PACKS[customTab] && JQ.PACKS[customTab].heroes) || []).slice(0, 16);
+    const gap = 10, tw = (672 - gap * 3) / 4, th = Math.min(190, (heroH - gap * 3) / 4);
+    packHeroes.forEach((name, i) => {
+      const x = 24 + (i % 4) * (tw + gap), y = hy + Math.floor(i / 4) * (th + gap), on = customHeroes.includes(name), k = pressK(x, y);
+      buttons.push({ x, y, w: tw, h: th, fn: () => toggleCustomHero(name) });
+      g.save();
+      g.translate(x + tw / 2, y + th / 2);
+      g.scale(k, k);
+      g.translate(-(x + tw / 2), -(y + th / 2));
+      if (on) paperTile(name, x, y, tw, th, { on: true });
+      else (card(x, y, tw, th, { dim: true }), text(g, name, x + tw / 2, y + th / 2 + 1, Math.min(th * 0.4, (tw * 0.8) / name.length), '#c8b090'));
+      JQ.roleIconDraw(g, HEROES[name].role, x + 6, y + 6, 28);
+      if (on) (g.beginPath(), g.arc(x + tw - 16, y + 16, 12, 0, Math.PI * 2), (g.fillStyle = '#a82818'), g.fill(), text(g, '✓', x + tw - 16, y + 17, 15, '#fff1d8', { font: 'sans-serif' }));
+      g.restore();
     });
-    const uy = 234 + Math.ceil(heroNames.length / 8) * 52 + 16;
-    text(g, '小兵（点选 / 再点取消）', 18, uy, 14, '#ffd23f', { align: 'left', font: 'sans-serif', bold: false });
+    const uy = hy + heroH + 10;
+    text(g, '小兵', 24, uy + 16, 20, '#ffd23f', { align: 'left' });
+    const uw = (672 - 7 * 8) / 8;
     JQ.ALL_UNITS.forEach((key, i) => {
-      const col = i % 8, row = Math.floor(i / 8);
-      button(16 + col * 86, uy + 14 + row * 46, 80, 40, key, () => toggleCustomUnit(key), { flat: true, on: customUnits.includes(key), size: 19 });
+      const x = 24 + (i % 8) * (uw + 8), y = uy + 34 + Math.floor(i / 8) * 86, on = customUnits.includes(key);
+      buttons.push({ x, y, w: uw, h: 78, fn: () => toggleCustomUnit(key) });
+      if (on) paperTile(key, x, y, uw, 78, { on: true });
+      else (card(x, y, uw, 78, { dim: true }), text(g, key, x + uw / 2, y + 40, 36, '#c8b090'));
     });
-    const by = uy + 14 + 2 * 46 + 24;
-    text(g, customMsg || (customValid() ? '可以保存并开战' : '需要 16 位英雄、6~12 种小兵'), C.W / 2, by, 15, customMsg ? '#ff8060' : '#d8c8a0', { font: 'sans-serif', bold: false });
-    button(90, by + 26, 180, 56, '保 存', () => {
-      if (!customValid()) return (customMsg = '先选满 16 位英雄和至少 6 种小兵');
+    const by = B - barH + 14;
+    if (customMsg) text(g, customMsg, C.W / 2, by - 14, 17, '#ff9a7a', { font: 'sans-serif' });
+    button(24, by, 240, 76, '保 存', () => {
+      if (!customValid()) return (customMsg = '先选满 16 位英雄和 6~12 种小兵');
       applyCustom();
       customMsg = '已保存';
-    }, { size: 20 });
-    button(300, by + 26, 260, 56, '保存并开战', () => {
-      if (!customValid()) return (customMsg = '先选满 16 位英雄和至少 6 种小兵');
+    }, { size: 26 });
+    button(280, by, 416, 76, '保存并开战', () => {
+      if (!customValid()) return (customMsg = '先选满 16 位英雄和 6~12 种小兵');
       applyCustom();
       pack = 'custom';
       helpPack = 'custom';
       localStorage.setItem('jq_pack', 'custom');
       screen = 'menu';
       newGame();
-    }, { size: 20, on: true });
-    button(230, by + 100, 260, 56, '返 回', () => (screen = 'menu'), { size: 22 });
+    }, { size: 28, on: true });
   }
 
   // ---------- 测试场：自定义双方阵容，自动打一场看结果 ----------
@@ -1712,60 +2047,54 @@
     const team = idx ? testLab.red : testLab.blue;
     const color = idx ? '#ff6a4a' : '#5ab0ff';
     const active = testLab.active === idx;
-    panel(x, y, w, h, active ? 'rgba(255,240,210,0.10)' : 'rgba(255,240,210,0.04)', active ? color : 'rgba(255,240,210,0.25)', active ? 2 : 1.2);
-    text(g, `${idx ? '红方' : '蓝方'} ${team.length}/8`, x + 12, y + 18, 16, color, { align: 'left' });
-    if (!team.length) text(g, '点下方卡加入', x + w / 2, y + 76, 13, '#9a8f7a', { bold: false });
-    const unitRole = (d) => (d.assassin ? '刺客' : d.ranged ? '射手' : d.rangedReduce ? '坦克' : '战士');
-    team.forEach((e, i) => {
-      const bx = x + 6 + (i % 4) * 80, by = y + 34 + Math.floor(i / 4) * 32, bw = 76, bh = 28;
-      buttons.push({ x: bx, y: by, w: bw, h: bh, fn: () => removeTest(team, i) });
-      JQ.rr(g, bx, by, bw, bh, 7);
-      g.fillStyle = 'rgba(60,40,22,0.9)';
-      g.fill();
-      g.strokeStyle = 'rgba(200,160,100,0.5)';
-      g.lineWidth = 1;
-      g.stroke();
-      if (e.kind === 'hero' && JQ.portraitOf(e.key)) JQ.portraitDraw(g, e.key, bx + 2, by + 2, 24, 24, { round: 12 });
-      else JQ.roleIconDraw(g, e.kind === 'hero' ? HEROES[e.key].role : unitRole(UNITS[e.key]), bx + 3, by + 4, 20);
-      text(g, e.key, bx + 28, by + 18, 13, '#f0e0c0', { align: 'left' });
-      text(g, '×', bx + bw - 8, by + 17, 12, '#c8b090', { align: 'right', font: 'sans-serif' });
-    });
     buttons.push({ x, y, w, h, fn: () => (testLab.active = idx) });
+    card(x, y, w, h, { r: 14, light: active });
+    if (active) (JQ.rr(g, x, y, w, h, 14), (g.strokeStyle = color), (g.lineWidth = 3), g.stroke());
+    JQ.rr(g, x + 10, y + 10, 120, 32, 16);
+    g.fillStyle = color;
+    g.fill();
+    text(g, `${idx ? '红方' : '蓝方'} ${team.length}/8`, x + 70, y + 27, 17, '#fff');
+    if (active) text(g, '当前编辑', x + w - 12, y + 27, 15, '#ffe08a', { align: 'right', font: 'sans-serif' });
+    if (!team.length) text(g, '点下方加入', x + w / 2, y + h / 2 + 24, 18, '#9a8f7a', { bold: false });
+    const tw = (w - 20 - 3 * 6) / 4, th = (h - 60 - 6) / 2;
+    team.forEach((e, i) => {
+      const bx = x + 10 + (i % 4) * (tw + 6), by = y + 52 + Math.floor(i / 4) * (th + 6);
+      buttons.push({ x: bx, y: by, w: tw, h: th, fn: () => removeTest(team, i) });
+      paperTile(e.key, bx, by, tw, th, { on: e.kind === 'hero' });
+    });
   }
   function drawTestLab() {
-    if (menuGame) JQ.render(menuGame, menuView);
-    pageFrame('测试场');
-    text(g, '点下方英雄/小兵加入当前队；点队伍里的卡移除；每队最多 8 个', C.W / 2, 84, 13, '#d8c8a0', { font: 'sans-serif', bold: false });
+    JQ.drawBackdrop(g);
+    pageFrame('测试场', 0.78, () => (screen = 'menu'));
     JQ.preloadUiArt();
-    drawTestTeam(0, 12, 98, 328, 142);
-    drawTestTeam(1, 380, 98, 328, 142);
-    JQ.roleIconDraw(g, 'warrior', 350, 150, 24);
-    const tabY = 252;
-    // 小标签按钮不放图标，避免和文字挤在一起
-    button(30, tabY, 100, 36, '英雄', () => ((testLab.tab = 'hero'), (testLab.page = 0)), { flat: true, on: testLab.tab === 'hero', size: 17 });
-    button(140, tabY, 100, 36, '小兵', () => ((testLab.tab = 'unit'), (testLab.page = 0)), { flat: true, on: testLab.tab === 'unit', size: 17 });
-    button(250, tabY, 100, 36, '随机', () => randomTestTeam(), { flat: true, size: 17 });
-    button(360, tabY, 100, 36, '清空', () => clearTestTeam(), { flat: true, size: 17 });
-    button(470, tabY, 210, 36, testLab.active ? '当前：红方' : '当前：蓝方', () => (testLab.active = 1 - testLab.active), { flat: true, on: true, size: 17 });
-
+    const T = pageTop() + 96, B = pageBottom();
+    drawTestTeam(0, 24, T, 328, 190);
+    drawTestTeam(1, 368, T, 328, 190);
+    const ty = T + 204;
+    segmented(24, ty, 320, 50, [['hero', '英雄'], ['unit', '小兵']], testLab.tab, (k) => ((testLab.tab = k), (testLab.page = 0)), 19);
+    button(360, ty, 160, 50, '随 机', () => randomTestTeam(), { flat: true, size: 19 });
+    button(536, ty, 160, 50, '清 空', () => clearTestTeam(), { flat: true, size: 19 });
+    // 选择网格：字牌，已在任一队里的点亮
     const list = testLab.tab === 'hero' ? Object.keys(HEROES) : JQ.ALL_UNITS;
-    const per = 35, pages = Math.max(1, Math.ceil(list.length / per));
+    const gy = ty + 64, barH = 200, cols = 5, gap = 8, tw = (672 - gap * (cols - 1)) / cols, th = 72;
+    const rows = Math.max(1, Math.floor((B - barH - gy) / (th + gap))), per = rows * cols, pages = Math.max(1, Math.ceil(list.length / per));
     testLab.page = Math.min(testLab.page, pages - 1);
     for (let i = 0; i < per; i++) {
       const key = list[testLab.page * per + i];
       if (!key) break;
-      const col = i % 7, row = Math.floor(i / 7);
-      button(8 + col * 100, 298 + row * 56, 94, 50, key, () => addTest(testLab.tab === 'hero' ? 'hero' : 'unit', key), { flat: true, on: testHas(key), size: 18 });
+      const x = 24 + (i % cols) * (tw + gap), y = gy + Math.floor(i / cols) * (th + gap), on = testHas(key);
+      buttons.push({ x, y, w: tw, h: th, fn: () => addTest(testLab.tab === 'hero' ? 'hero' : 'unit', key) });
+      if (on) paperTile(key, x, y, tw, th, { on: true });
+      else (card(x, y, tw, th, { r: 10 }), text(g, key, x + tw / 2, y + th / 2 + 1, Math.min(th * 0.42, (tw * 0.8) / key.length), '#f0e0c0'));
     }
-    button(30, 590, 100, 34, '上一页', () => (testLab.page = Math.max(0, testLab.page - 1)), { flat: true, disabled: testLab.page === 0, size: 15 });
-    text(g, `第 ${testLab.page + 1}/${pages} 页`, C.W / 2, 607, 13, '#bfb39a', { font: 'sans-serif', bold: false });
-    button(590, 590, 100, 34, '下一页', () => (testLab.page = Math.min(pages - 1, testLab.page + 1)), { flat: true, disabled: testLab.page === pages - 1, size: 15 });
-    button(30, 634, 170, 36, `英雄 Lv${testLab.heroLv}`, () => cycleTestLevel('hero'), { flat: true, size: 15 });
-    button(210, 634, 170, 36, `小兵 Lv${testLab.unitLv}`, () => cycleTestLevel('unit'), { flat: true, size: 15 });
-    text(g, '等级统一作用于整队，点击切换', 400, 652, 12, '#bfb39a', { align: 'left', font: 'sans-serif', bold: false });
-    button(180, 692, 360, 64, '开始测试', startTest, { on: true, size: 28 });
-    button(210, 770, 300, 50, '返回主页', () => (screen = 'menu'), { size: 20 });
-    if (testLab.msg) text(g, testLab.msg, C.W / 2, 850, 15, '#ff8060', { font: 'sans-serif', bold: false });
+    const py = B - barH + 8;
+    iconBtn(24, py, 52, '‹', () => (testLab.page = Math.max(0, testLab.page - 1)));
+    text(g, `${testLab.page + 1} / ${pages}`, 116, py + 27, 19, '#e8d8b0', { font: 'sans-serif' });
+    iconBtn(156, py, 52, '›', () => (testLab.page = Math.min(pages - 1, testLab.page + 1)));
+    button(236, py, 224, 52, `英雄 Lv${testLab.heroLv}`, () => cycleTestLevel('hero'), { flat: true, size: 19 });
+    button(472, py, 224, 52, `小兵 Lv${testLab.unitLv}`, () => cycleTestLevel('unit'), { flat: true, size: 19 });
+    if (testLab.msg) text(g, testLab.msg, C.W / 2, py + 76, 17, '#ff9a7a', { font: 'sans-serif' });
+    button(120, B - 96, 480, 86, '开始测试', startTest, { on: true, size: 32 });
   }
   function drawTestTop() {
     const names = (team) => team.map((e) => e.key).join('、');
@@ -1811,71 +2140,162 @@
   }
 
   let helpBack = 'menu';
+  // 玩法说明：5 张图解步骤卡（用游戏里的卡面/箭头画示意），每张只配一句话
+  function miniCard(ch, x, y, s2, lv, opts) {
+    opts = opts || {};
+    JQ.rr(g, x, y, s2, s2, s2 * 0.14);
+    const pg = g.createLinearGradient(0, y, 0, y + s2);
+    pg.addColorStop(0, opts.hero ? '#ffe9b0' : '#f6eed8');
+    pg.addColorStop(1, opts.hero ? '#e8b850' : '#dccba2');
+    g.fillStyle = pg;
+    g.fill();
+    g.lineWidth = 3 + (lv || 1);
+    g.strokeStyle = JQ.LEVEL_COLORS[Math.min(lv || 1, 5)] || '#9a9a9a';
+    g.stroke();
+    text(g, ch, x + s2 / 2, y + s2 / 2 + 2, s2 * (ch.length > 1 ? 0.36 : 0.6), opts.hero ? '#8a1a08' : '#2a1608');
+    if (lv) (JQ.rr(g, x + s2 - 24, y - 8, 30, 22, 11), (g.fillStyle = '#2a1608'), g.fill(), text(g, 'Lv' + lv, x + s2 - 9, y + 3, 12, '#ffe9a0', { font: 'sans-serif' }));
+  }
+  function arrowR(x, y, w) {
+    g.save();
+    g.strokeStyle = '#ffd23f';
+    g.fillStyle = '#ffd23f';
+    g.lineWidth = 6;
+    g.lineCap = 'round';
+    g.beginPath();
+    g.moveTo(x, y);
+    g.lineTo(x + w - 12, y);
+    g.stroke();
+    g.beginPath();
+    g.moveTo(x + w, y);
+    g.lineTo(x + w - 18, y - 12);
+    g.lineTo(x + w - 18, y + 12);
+    g.closePath();
+    g.fill();
+    g.restore();
+  }
   function drawHelp() {
-    pageFrame('玩法说明', 0.85);
-    const lines = [
-      '· 点「招兵」：备战席剩下的卡自动卖掉（几级卖几包），再整排刷新 5 张。',
-      '· 主角「帅」沿格子来回走，踩到兵卡就召唤小兵（卡有冷却）。',
-      '· 卡可在场上、备战席之间随意拖：移动/互换/替换/收回，拖到包子卖掉。',
-      '· 同名同级卡叠在一起升级；小兵无等级上限；5 级起每次召 4 个，英雄最高 5 级。',
-      '· 文字卡：两个字左右挨着就合成英雄（谁左谁右都行，字可共用）。',
-      `· 英雄只算一个等级，把它的任一字拖上去就 +1 级；${C.ULT_LEVEL} 级（天命 2 级）解锁大招。`,
-      '· 某个字能合成的英雄全部满级后，招兵不再刷出这个字。',
-      '· 格子块拖到棋盘边上扩建；也能往战场里拼「前哨」：兵从前线出发，但哨所会被打。',
-      '· 建筑：马 加移速｜鼓 减冷却｜旗 加攻击｜粮 产包子',
-      '· 道具：药 基地回血｜金 +25 包子｜令 冷却清空（点一下就用）',
-      '· 兵种：刀盾弓枪剑刺 + 各包骑/弩/陌/妖/魔/猴/僧/龙/鬼/甲',
-      '· 模式：经典/天命都是 200 关闯关，越往后敌人越强；无限守波次。',
-      '· 自定义卡包：自己选 16 位英雄（含夏夏）和 6~12 种小兵。',
-      '· 测试场：自定义双方英雄/小兵阵容，自动打一场看胜负。',
+    buttons.push({ x: -padX, y: -padY, w: C.W + 2 * padX, h: C.H + 2 * padY, fn: () => {} });
+    pageFrame('玩法说明', 0.85, () => (screen = helpBack));
+    const T = pageTop() + 96, B = pageBottom() - 90, n = 5, gap = 12, h = (B - T - gap * (n - 1)) / n;
+    const steps = [
+      ['招兵', '点「招兵」刷 5 张卡，拖进格子', (x, y, s2) => (miniCard('刀', x, y, s2, 1), miniCard('弓', x + s2 + 10, y, s2, 1), arrowR(x + 2 * s2 + 24, y + s2 / 2, 50), JQ.ui9(g, 'slot', x + 2 * s2 + 84, y - 6, s2 + 12, s2 + 12, 30, 18), miniCard('盾', x + 2 * s2 + 90, y, s2, 1))],
+      ['合成升级', '同名同级叠在一起 +1 级', (x, y, s2) => (miniCard('刀', x, y, s2, 1), text(g, '+', x + s2 + 22, y + s2 / 2, 40, '#ffd23f'), miniCard('刀', x + s2 + 44, y, s2, 1), arrowR(x + 2 * s2 + 56, y + s2 / 2, 46), miniCard('刀', x + 2 * s2 + 112, y, s2, 2))],
+      ['合字成将', '两字左右相邻 = 英雄', (x, y, s2) => (miniCard('关', x, y, s2, 1), miniCard('羽', x + s2 + 4, y, s2, 1), arrowR(x + 2 * s2 + 18, y + s2 / 2, 46), miniCard('关羽', x + 2 * s2 + 74, y, s2 + 14, 0, { hero: true }))],
+      ['巡营召兵', '主角走过兵卡，召出小兵', (x, y, s2) => {
+        for (let k = 0; k < 4; k++) miniCard(['刀', '弓', '枪', '骑'][k], x + k * (s2 * 0.8 + 6), y + 10, s2 * 0.8, 0);
+        g.save();
+        g.strokeStyle = 'rgba(255,210,90,0.95)';
+        g.setLineDash([8, 7]);
+        g.lineWidth = 4;
+        g.beginPath();
+        g.moveTo(x, y + s2 * 0.8 + 26);
+        g.lineTo(x + 4 * (s2 * 0.8 + 6), y + s2 * 0.8 + 26);
+        g.stroke();
+        g.restore();
+        text(g, '帅', x + ((performance.now() / 12) % (4 * (s2 * 0.8 + 6))), y + s2 * 0.8 + 26, 28, '#a82818', { stroke: '#fff1d8', strokeW: 4 });
+      }],
+      ['推倒敌营', '打空对面基地血量就赢', (x, y, s2) => {
+        const w = 3 * s2;
+        JQ.rr(g, x, y + s2 / 2 - 14, w, 28, 14);
+        g.fillStyle = '#2a1a1a';
+        g.fill();
+        const f = 0.15 + 0.5 * (0.5 + 0.5 * Math.sin(performance.now() / 600));
+        JQ.rr(g, x, y + s2 / 2 - 14, w * f, 28, 14);
+        g.fillStyle = '#d0402a';
+        g.fill();
+        text(g, '敌营', x + w / 2, y + s2 / 2 + 1, 18, '#fff', { stroke: 'rgba(0,0,0,0.6)', strokeW: 3 });
+      }],
     ];
-    lines.forEach((l, i) => text(g, l, 26, 120 + i * 32, 17, '#f5ead0', { align: 'left', bold: false }));
-    text(g, '每个卡包 16 位英雄，各有被动特长、技能和大招', C.W / 2, 580, 19, '#ffd23f');
-    text(g, '（点任意处看英雄图鉴）', C.W / 2, 1250, 18, '#bfb39a');
+    steps.forEach(([ttl, line, pic], i) => {
+      const y = T + i * (h + gap);
+      card(24, y, 672, h, { r: 16 });
+      JQ.rr(g, 40, y + 16, 44, 44, 22);
+      g.fillStyle = '#a82818';
+      g.fill();
+      text(g, String(i + 1), 62, y + 39, 24, '#fff1d8');
+      text(g, ttl, 98, y + 40, 28, '#ffe9a0', { align: 'left', stroke: '#1a0c04', strokeW: 4 });
+      text(g, line, 98, y + 76, 18, '#e8d8b0', { align: 'left', font: 'sans-serif', bold: false });
+      // 示意图放在标题下方居中（宽度按每步的元素数估算）
+      const s2 = Math.max(40, Math.min(84, h - 120)), pw = [3 * s2 + 96, 3 * s2 + 112, 3 * s2 + 88, 4 * (s2 * 0.8 + 6), 3 * s2][i];
+      pic(C.W / 2 - pw / 2, y + 96 + (h - 96 - s2) / 2 - 6, s2);
+    });
+    button(40, B + 16, 300, 66, '英雄图鉴', () => ((helpPage = 1), (helpPack = pack)), { on: true, size: 24 });
+    button(380, B + 16, 300, 66, '小兵图鉴', () => (screen = 'units'), { size: 24 });
   }
 
   // 小兵图鉴：16 种兵，标注出场卡包和基础数值
+  // 小兵图鉴：2 列大卡片，字牌 + 职业 + 三条图标属性 + 特性图标；点卡片底部显示一句说明和具体数值
+  let unitSel = null;
+  const UNIT_MAX = (() => {
+    const us = Object.values(UNITS);
+    return { atk: Math.max(...us.map((u) => u.atk)), hp: Math.max(...us.map((u) => u.hp)), rate: Math.max(...us.map((u) => 1 / u.rate)) };
+  })();
+  function unitTraits(d) {
+    const t = [];
+    if (d.ranged) t.push('range');
+    if (d.rangedReduce) t.push('armor');
+    if (d.assassin || d.stealth) t.push('stealth');
+    if (d.splash) t.push('aoe');
+    if (d.healAura) t.push('heal');
+    if (d.magic) t.push('bolt');
+    if (d.bonus && d.bonus.hero) t.push('atk');
+    if (d.bonus && (d.bonus['弓'] || d.bonus['盾'])) t.push('crit');
+    if (d.rate <= 0.7) t.push('rate');
+    if (d.speed >= 75) t.push('speed');
+    return t.slice(0, 3);
+  }
   function drawUnits() {
-    if (menuGame) JQ.render(menuGame, menuView);
-    pageFrame('小兵图鉴');
+    JQ.drawBackdrop(g);
+    pageFrame('小兵图鉴', 0.78, () => (screen = 'menu'));
     JQ.preloadUiArt();
-    text(g, '同字同属性 · 5 级起每次召 4 个 · 共 16 种', C.W / 2, 96, 15, '#d8c8a0', { font: 'sans-serif', bold: false });
-    const role = (d) => (d.assassin ? { n: '刺客', icon: '刺客' } : d.ranged ? { n: '远程', icon: '射手' } : d.rangedReduce ? { n: '坦克', icon: '坦克' } : { n: '近战', icon: '战士' });
+    const T = pageTop() + 96, B = pageBottom(), sheet = unitSel ? 132 : 0;
+    const role = (d) => (d.assassin ? ['刺客', '刺客'] : d.ranged ? ['远程', '射手'] : d.rangedReduce ? ['坦克', '坦克'] : ['近战', '战士']);
+    const rows = 8, gap = 10, ch = (B - T - sheet - gap * (rows - 1)) / rows, cw = (672 - gap) / 2;
     JQ.ALL_UNITS.forEach((k, i) => {
-      const d = UNITS[k], rl = role(d);
-      const x = 18 + (i % 2) * 350, y = 126 + Math.floor(i / 2) * 128, w = 334, h = 120;
-      panel(x, y, w, h, 'rgba(255,240,210,0.06)', 'rgba(255,220,150,0.3)', 1.5);
-      // 颜色只给等级用：这里一律朱红竖条；类型用生成图标
-      g.save();
-      g.fillStyle = '#8c2f1c';
-      JQ.rr(g, x + 1, y + 8, 4, h - 16, 2);
+      const d = UNITS[k], [rn, ri] = role(d), on = unitSel === k;
+      const x = 24 + (i % 2) * (cw + gap), y = T + Math.floor(i / 2) * (ch + gap);
+      buttons.push({ x, y, w: cw, h: ch, fn: () => ((unitSel = on ? null : k), sfx('tap')) });
+      card(x, y, cw, ch, { light: on });
+      if (on) (JQ.rr(g, x, y, cw, ch, 12), (g.strokeStyle = '#ffe08a'), (g.lineWidth = 3), g.stroke());
+      // 字牌
+      const ts = ch - 20;
+      JQ.rr(g, x + 10, y + 10, ts, ts, 10);
+      const pg = g.createLinearGradient(0, y + 10, 0, y + 10 + ts);
+      pg.addColorStop(0, '#f6eed8');
+      pg.addColorStop(1, '#dccba2');
+      g.fillStyle = pg;
       g.fill();
-      g.restore();
-      if (JQ.ui9(g, 'card', x + 10, y + 22, 56, 56, 34, 12)) text(g, k, x + 38, y + 51, 34, '#2a1a08');
-      else text(g, k, x + 38, y + 50, 38, '#f5ead0', { stroke: '#1a1008', strokeW: 4 });
-      text(g, `${k} · ${rl.n}`, x + 72, y + 26, 20, '#f0d698', { align: 'left' });
-      JQ.roleIconDraw(g, rl.icon, x + 296, y + 8, 27);
-      text(g, d.desc, x + 72, y + 48, 12, '#bfb39a', { align: 'left', bold: false, font: 'sans-serif' });
-      // 血/攻条：一眼看出定位，不再堆两行数字
-      const bars = [['血', d.hp / 400, `${d.hp}`, '#c05040'], ['攻', d.atk / 40, `${d.atk}`, '#e0a040']];
-      bars.forEach(([label, pct, val, col], bi) => {
-        const bx = x + 72 + bi * 128, by = y + 66;
-        text(g, label, bx, by + 8, 10, '#c8b090', { align: 'left', font: 'sans-serif', bold: false });
-        g.save();
-        JQ.rr(g, bx + 16, by + 2, 68, 8, 4);
-        g.fillStyle = 'rgba(255,255,255,0.1)';
+      text(g, k, x + 10 + ts / 2, y + 10 + ts / 2 + 2, ts * 0.66, '#2a1608');
+      // 职业 + 特性图标
+      const ix = x + ts + 22;
+      JQ.roleIconDraw(g, ri, ix, y + 8, 32);
+      text(g, rn, ix + 38, y + 25, 20, '#ffe9a0', { align: 'left', stroke: '#1a0c04', strokeW: 3 });
+      unitTraits(d).slice(0, 2).forEach((tid, n) => JQ.statIcon(g, tid, x + cw - 38 - n * 33, y + 9, 30));
+      // 三条属性
+      const bw = x + cw - 14 - (ix + 30), rowH = (ch - 52) / 3;
+      [['atk', d.atk / UNIT_MAX.atk], ['hp', d.hp / UNIT_MAX.hp], ['rate', 1 / d.rate / UNIT_MAX.rate]].forEach(([id, v], n) => {
+        const by = y + 50 + rowH * n + rowH / 2;
+        JQ.statIcon(g, id, ix - 2, by - 13, 26);
+        JQ.rr(g, ix + 30, by - 6, bw, 12, 6);
+        g.fillStyle = 'rgba(0,0,0,0.45)';
         g.fill();
-        JQ.rr(g, bx + 16, by + 2, Math.max(4, 68 * Math.min(1, pct)), 8, 4);
-        g.fillStyle = col;
+        JQ.rr(g, ix + 30, by - 6, Math.max(12, bw * Math.min(1, v)), 12, 6);
+        g.fillStyle = id === 'hp' ? '#c84a34' : id === 'atk' ? '#e8a23a' : '#d8c070';
         g.fill();
-        g.restore();
-        text(g, val, bx + 90, by + 9, 10, '#e8dcc0', { align: 'left', font: 'sans-serif', bold: false });
       });
-      text(g, `射程 ${d.range} · 攻速 ${d.rate} · 移速 ${d.speed} · 冷却 ${d.cd}s`, x + 72, y + 94, 10.5, '#e8dcc0', { align: 'left', bold: false, font: 'sans-serif' });
-      const packs = Object.keys(JQ.PACK_UNITS).filter((p) => p !== 'custom' && JQ.PACK_UNITS[p].includes(k)).map((p) => JQ.PACKS[p].name);
-      text(g, `出场：${packs.join('/') || '仅自定义'}`, x + 72, y + 110, 9.5, '#c9b48a', { align: 'left', bold: false, font: 'sans-serif' });
     });
-    button(210, 1170, 300, 58, '返 回', () => (screen = 'menu'), { size: 24 });
+    if (unitSel) {
+      const d = UNITS[unitSel], y = B - sheet + 8;
+      card(24, y, 672, sheet - 8, { r: 14, light: true });
+      text(g, unitSel, 70, y + 62, 64, '#ffe9a0', { stroke: '#1a0c04', strokeW: 6 });
+      text(g, d.desc, 120, y + 40, 21, '#fff1d8', { align: 'left' });
+      const packs = Object.keys(JQ.PACK_UNITS).filter((p) => p !== 'custom' && JQ.PACK_UNITS[p].includes(unitSel)).map((p) => JQ.PACKS[p].name);
+      [['atk', d.atk], ['hp', d.hp], ['range', d.range], ['rate', d.rate + 's'], ['cd', d.cd + 's']].forEach(([id, v], n) => {
+        JQ.statIcon(g, id, 120 + n * 100, y + 66, 32);
+        text(g, String(v), 156 + n * 100, y + 83, 18, '#ffe9a0', { align: 'left', font: 'sans-serif' });
+      });
+      text(g, packs.join(' · ') || '仅自定义', 680, y + 40, 15, '#d8c8a0', { align: 'right', font: 'sans-serif', bold: false });
+    }
   }
 
   // 英雄图鉴：按卡包分页
@@ -1887,125 +2307,180 @@
     g.translate(x + w / 2, y + h / 2);
     g.scale(k, k);
     g.translate(-(x + w / 2), -(y + h / 2));
-    JQ.rr(g, x, y, w, h, 10);
-    g.fillStyle = isMain ? 'rgba(90,58,18,0.65)' : 'rgba(255,240,210,0.055)';
+    card(x, y, w, h, { light: isMain });
+    // 突破过/穿皮肤的显示立绘，其余是宣纸字牌（两个字竖排）
+    const art = JQ.portraitOf(name) && JQ.portraitDraw(g, name, x + 6, y + 6, w - 12, h - 44, { round: 8 });
+    if (!art) {
+      const px = x + 8, py = y + 8, pw = w - 16, ph = h - 50;
+      JQ.rr(g, px, py, pw, ph, 8);
+      const pg = g.createLinearGradient(0, py, 0, py + ph);
+      pg.addColorStop(0, '#f6eed8');
+      pg.addColorStop(1, '#dccba2');
+      g.fillStyle = pg;
+      g.fill();
+      const cs = Math.min(pw * 0.62, ph * 0.4);
+      text(g, hd.chars[0], x + w / 2, py + ph * 0.3, cs, '#2a1608');
+      text(g, hd.chars[1], x + w / 2, py + ph * 0.72, cs, '#2a1608');
+      // 朱印角标
+      JQ.rr(g, px + pw - 30, py + ph - 30, 24, 24, 4);
+      g.fillStyle = '#a82818';
+      g.fill();
+      text(g, hd.chars[0], px + pw - 18, py + ph - 17, 15, '#fff1d8');
+    }
+    text(g, name, x + w / 2, y + h - 24, 22, isMain ? '#ffe08a' : '#fff1d8', { stroke: '#1a0c04', strokeW: 4 });
+    // 职业徽章左上；本命/突破右上
+    g.save();
+    g.beginPath();
+    g.arc(x + 22, y + 22, 16, 0, Math.PI * 2);
+    g.fillStyle = 'rgba(30,16,8,0.85)';
     g.fill();
-    g.strokeStyle = isMain ? '#ffcf5a' : 'rgba(230,194,122,0.28)';
-    g.lineWidth = isMain ? 2.2 : 1;
+    g.strokeStyle = 'rgba(240,200,120,0.8)';
+    g.lineWidth = 1.2;
     g.stroke();
-    // 三位活动英雄用立绘；其他英雄用一个大字做底纹
-    if (JQ.portraitOf(name) && JQ.portraitDraw(g, name, x, y, w, h, { round: 10, alpha: 0.92 })) {
-      g.save();
-      JQ.rr(g, x, y, w, h, 10);
-      g.clip();
-      const grd = g.createLinearGradient(0, y + h * 0.35, 0, y + h);
-      grd.addColorStop(0, 'rgba(16,10,6,0.15)');
-      grd.addColorStop(1, 'rgba(16,10,6,0.92)');
-      g.fillStyle = grd;
-      g.fillRect(x, y + h * 0.35, w, h * 0.65);
-      g.restore();
-    } else {
-      g.save();
-      g.globalAlpha = 0.12;
-      text(g, hd.chars[0], x + w - 26, y + h / 2 + 22, 82, '#ffe9a0', { align: 'right' });
-      g.restore();
-    }
-    JQ.roleIconDraw(g, hd.role, x + w - 32, y + 5, 27);
-    text(g, name, x + 10, y + 25, 20, '#ffe9a0', { align: 'left', stroke: '#1a1008', strokeW: 3 });
-    text(g, hd.role, x + 10, y + 44, 10, '#c8b090', { align: 'left', font: 'sans-serif', bold: false });
-    const bl = (JQ.BOND_BY_HERO[name] || []).filter((b) => helpPack === 'custom' || JQ.packBonds(helpPack).includes(b));
-    if (bl.length) text(g, '羁绊 · ' + bl.slice(0, 1).map((b) => b.name).join(''), x + 10, y + 60, 9, '#e6b04a', { align: 'left', font: 'sans-serif', bold: false });
-    text(g, '被动 · ' + hd.passive.name, x + 10, y + 88, 11, '#d9c79a', { align: 'left', font: 'sans-serif', bold: false });
-    text(g, '大招 · ' + hd.ult.name, x + 10, y + 106, 11, '#e8a060', { align: 'left', font: 'sans-serif', bold: false });
-    if (ACT.byHero[name]) text(g, `突破 ${brkOf(name)}/3`, x + w - 10, y + h - 12, 10, brkOf(name) ? '#ffcf5a' : '#9a8f7a', { align: 'right', font: 'sans-serif' });
-    if (isMain) {
-      JQ.ui2Draw(g, 'star_on', x + 8, y + h - 26, 18, 17);
-      text(g, `本命 Lv${heroLvOf(name)}`, x + 28, y + h - 14, 10, '#ffd23f', { align: 'left', font: 'sans-serif' });
-    }
     g.restore();
+    JQ.roleIconDraw(g, hd.role, x + 8, y + 8, 28);
+    if (isMain) {
+      JQ.rr(g, x + w - 52, y + 8, 44, 22, 11);
+      g.fillStyle = '#a82818';
+      g.fill();
+      text(g, '本命', x + w - 30, y + 19, 13, '#fff1d8', { font: 'sans-serif' });
+    } else if (ACT.byHero[name]) drawMiniPips(x + w - 42, y + 20, brkOf(name));
+    g.restore();
+  }
+  // 英雄详情：立绘/字牌 + 五项属性条 + 三枚技能徽章（点哪个看哪个，只显示一句话）+ 羁绊成员小字牌
+  let detailSk = 2;
+  const STAT_MAX = (() => {
+    const hs = Object.values(HEROES);
+    return { atk: Math.max(...hs.map((h) => h.atk * ((h.passive && h.passive.atkMult) || 1))), hp: Math.max(...hs.map((h) => h.hp)), range: Math.max(...hs.map((h) => h.range)), rate: Math.max(...hs.map((h) => 1 / h.rate)), speed: Math.max(...hs.map((h) => h.speed)) };
+  })();
+  function statBar(id, label, v, max, x, y, w) {
+    JQ.statIcon(g, id, x, y - 20, 40);
+    text(g, label, x + 50, y, 18, '#f0e0c0', { align: 'left' });
+    const bx = x + 96, bw = w - 96;
+    JQ.rr(g, bx, y - 8, bw, 16, 8);
+    g.fillStyle = 'rgba(0,0,0,0.45)';
+    g.fill();
+    JQ.rr(g, bx, y - 8, Math.max(16, bw * Math.min(1, v / max)), 16, 8);
+    const grd = g.createLinearGradient(bx, 0, bx + bw, 0);
+    grd.addColorStop(0, '#c8501c');
+    grd.addColorStop(1, '#ffcf5a');
+    g.fillStyle = grd;
+    g.fill();
+  }
+  function tagChip(id, x, y) {
+    const name = JQ.TAG_NAME[id] || id, w = 54 + name.length * 18;
+    JQ.rr(g, x, y, w, 40, 20);
+    g.fillStyle = 'rgba(20,10,4,0.75)';
+    g.fill();
+    g.strokeStyle = 'rgba(230,190,120,0.6)';
+    g.lineWidth = 1.2;
+    g.stroke();
+    JQ.statIcon(g, id, x + 3, y + 3, 34);
+    text(g, name, x + 44, y + 21, 17, '#ffe9a0', { align: 'left' });
+    return w;
   }
   function drawHeroDetail(name) {
     const hd = HEROES[name], blv = brkOf(name), bdef = JQ.heroAtBrk(name, blv);
     buttons.push({ x: -padX, y: -padY, w: C.W + 2 * padX, h: C.H + 2 * padY, fn: () => (rosterSel = null) });
-    veil(0.72);
-    popFrame(50, 70, 620, 1090, '英雄详情');
-    buttons.push({ x: 50, y: 70, w: 620, h: 1090, fn: () => {} });
-    iconBtn(612, 50, 50, '×', () => (rosterSel = null));
-    // 左：立绘或大字
-    const px = 82, py = 236, pw = 180, ph = 240;
+    veil(0.8);
+    const X = 30, Y = pageTop() + 110, W = 660, H = pageBottom() - Y - 6;
+    popFrame(X, Y, W, H, name);
+    buttons.push({ x: X, y: Y, w: W, h: H, fn: () => {} });
+    // 左：立绘（突破/皮肤后）或宣纸字牌
+    const bl = JQ.BOND_BY_HERO[name] || [], nb = Math.min(2, bl.length);
+    // 立绘高度吃掉多余空间：长屏手机上大图，短屏上缩小
+    const ph = Math.max(280, Math.min(460, H - (54 + 34 + 180 + 172 + 70 * nb + 110))), pw = Math.min(270, Math.round(ph * 0.75));
+    const px = X + 30, py = Y + 54;
+    card(px - 4, py - 4, pw + 8, ph + 8, { r: 14 });
     if (!JQ.portraitDraw(g, name, px, py, pw, ph, { round: 12 })) {
-      if (!JQ.ui9(g, 'card', px, py, pw, ph, 34, 20)) panel(px, py, pw, ph, '#f3ead3', '#6a4a20', 3);
-      text(g, hd.chars[0], px + pw / 2, py + 66, 66, '#2a1a08');
-      text(g, hd.chars[1], px + pw / 2, py + 166, 66, '#2a1a08');
-    } else if (ACT.byHero[name]) {
-      // 字饰只做右上角小徽记，不盖住立绘
-      g.save();
-      JQ.rr(g, px + pw - 48, py + 8, 40, 40, 20);
-      g.fillStyle = 'rgba(20,12,6,0.72)';
+      JQ.rr(g, px, py, pw, ph, 12);
+      const pg = g.createLinearGradient(0, py, 0, py + ph);
+      pg.addColorStop(0, '#f6eed8');
+      pg.addColorStop(1, '#dccba2');
+      g.fillStyle = pg;
       g.fill();
-      g.strokeStyle = 'rgba(240,200,120,0.8)';
-      g.lineWidth = 1.4;
+      if (ACT.byHero[name]) JQ.drawOrnament(g, name, px + pw / 2, py + ph / 2, 90, { tier: blv, behind: true, preview: blv <= 0 });
+      text(g, hd.chars[0], px + pw / 2, py + ph * 0.3, 96, '#2a1608');
+      text(g, hd.chars[1], px + pw / 2, py + ph * 0.7, 96, '#2a1608');
+      if (ACT.byHero[name]) JQ.drawOrnament(g, name, px + pw / 2, py + ph / 2, 90, { tier: blv, behind: false, preview: blv <= 0 });
+    }
+    // 右：职业 + 属性条
+    const rx = px + pw + 30, rw = X + W - 30 - rx;
+    JQ.roleIconDraw(g, hd.role, rx, py, 44);
+    text(g, hd.role, rx + 54, py + 23, 24, '#ffe9a0', { align: 'left', stroke: '#1a0c04', strokeW: 4 });
+    text(g, JQ.PACKS[hd.pack] ? JQ.PACKS[hd.pack].name : '', rx + rw, py + 23, 18, '#c8b090', { align: 'right' });
+    const P = bdef.passive || {};
+    const sg = (ph - 80) / 5;
+    [['atk', '攻击', bdef.atk * (P.atkMult || 1), STAT_MAX.atk], ['hp', '生命', bdef.hp, STAT_MAX.hp], ['range', '射程', bdef.range, STAT_MAX.range], ['rate', '攻速', 1 / bdef.rate, STAT_MAX.rate], ['speed', '移速', bdef.speed, STAT_MAX.speed]].forEach(([id, l, v, m], i) => statBar(id, l, v, m, rx, py + 70 + sg * (i + 0.5), rw));
+    // 中：三枚技能徽章
+    const skills = [['被动', passiveTitle(bdef), bdef.passive.desc, JQ.passiveTags(P)], ['技能', bdef.skill.name, bdef.skill.desc, JQ.effectTags(bdef.skill)], ['大招', bdef.ult.name, bdef.ult.desc, JQ.effectTags(bdef.ult)]];
+    const my = py + ph + 34, mw = (W - 60) / 3;
+    skills.forEach(([tag, nm, , tags], i) => {
+      const cx = X + 30 + mw * i + mw / 2, on = detailSk === i, r = 54;
+      buttons.push({ x: cx - mw / 2, y: my, w: mw, h: 170, fn: () => ((detailSk = i), sfx('tap')) });
+      g.save();
+      if (on) (g.shadowColor = '#ffcf5a'), (g.shadowBlur = 18);
+      g.beginPath();
+      g.arc(cx, my + r + 6, r, 0, Math.PI * 2);
+      const grd = g.createRadialGradient(cx, my + r - 10, 6, cx, my + r + 6, r);
+      grd.addColorStop(0, on ? '#c0502a' : '#6a3a20');
+      grd.addColorStop(1, on ? '#5a160a' : '#2a160a');
+      g.fillStyle = grd;
+      g.fill();
+      g.shadowBlur = 0;
+      g.lineWidth = on ? 4 : 2;
+      g.strokeStyle = on ? '#ffe08a' : 'rgba(230,190,120,0.6)';
       g.stroke();
       g.restore();
-      JQ.drawOrnament(g, name, px + pw - 28, py + 28, 20, { tier: blv, behind: true, preview: blv <= 0 });
-    }
-    text(g, name, 286, 268, 36, '#ffe9a0', { align: 'left', stroke: '#1a1008', strokeW: 5 });
-    JQ.roleIconDraw(g, hd.role, 290, 292, 28);
-    text(g, `${JQ.PACKS[hd.pack] ? JQ.PACKS[hd.pack].name : ''} · ${hd.role}`, 326, 312, 14, '#bfa878', { align: 'left', font: 'sans-serif', bold: false });
-    const bl = (JQ.BOND_BY_HERO[name] || []).slice(0, 3);
-    if (bl.length) text(g, '羁绊 · ' + bl.map((b) => b.name).join(' / '), 286, 340, 12, '#e6b04a', { align: 'left', font: 'sans-serif', bold: false });
-    if (ACT.byHero[name]) {
-      text(g, `突破 ${blv}/3 · 等级上限 Lv${20 + 10 * blv}`, 286, 366, 13, '#ffcf5a', { align: 'left', font: 'sans-serif' });
-      text(g, `字饰 · ${ACT.byHero[name].ornName}`, 286, 388, 12, '#d8b888', { align: 'left', font: 'sans-serif', bold: false });
-    }
-    // 说明区
-    let yy = 510;
-    const sec = (tag, title, desc, color) => {
-      text(g, tag, 82, yy, 13, color, { align: 'left', font: 'sans-serif', bold: false });
-      text(g, title, 132, yy, 17, '#fff3d6', { align: 'left' });
-      yy += 26;
-      wrapLines(desc, 27).slice(0, 3).forEach((line) => {
-        text(g, line, 82, yy, 13, '#d8c8a0', { align: 'left', font: 'sans-serif', bold: false });
-        yy += 20;
+      JQ.statIcon(g, tags[0] || (i === 0 ? 'aura' : 'aoe'), cx - 34, my + r + 6 - 34, 68);
+      JQ.rr(g, cx - 34, my - 4, 68, 26, 13);
+      g.fillStyle = i === 2 ? '#a82818' : i === 1 ? '#2f5a6a' : '#6a5a3a';
+      g.fill();
+      text(g, tag, cx, my + 9, 15, '#fff1d8', { font: 'sans-serif' });
+      text(g, nm, cx, my + 2 * r + 36, nm.length > 5 ? 18 : 22, on ? '#ffe08a' : '#e8d8b0', { stroke: '#1a0c04', strokeW: 4 });
+    });
+    // 选中技能：效果标签 + 一句话
+    const [, , desc, tags] = skills[detailSk];
+    const dy = my + 180;
+    card(X + 30, dy, W - 60, 150, { r: 14 });
+    let tx = X + 48;
+    tags.forEach((t) => (tx += tagChip(t, tx, dy + 16) + 10));
+    wrapLines(desc.replace(/。$/, ''), 26).slice(0, 2).forEach((line, j) => text(g, line, X + 50, dy + 90 + j * 30, 20, '#f0e4c8', { align: 'left', font: 'sans-serif', bold: false }));
+    // 羁绊：成员小字牌
+    let by = dy + 172;
+    const by2 = Y + H - 100;
+    bl.slice(0, 2).forEach((b) => {
+      if (by + 64 > by2) return;
+      text(g, b.name, X + 40, by + 32, 20, '#ffcf5a', { align: 'left' });
+      b.heroes.forEach((h, k) => {
+        const bx = X + 170 + k * 92;
+        if (bx + 84 > X + W - 20) return;
+        JQ.rr(g, bx, by + 4, 84, 56, 8);
+        g.fillStyle = h === name ? '#ffe7a6' : '#efe3c4';
+        g.fill();
+        text(g, h, bx + 42, by + 33, h.length > 2 ? 18 : 24, '#2a1608');
       });
-      yy += 12;
-    };
-    sec('被动', `【${passiveTitle(bdef)}】`, bdef.passive.desc, '#d9c79a');
-    sec('技能', `【${bdef.skill.name}】`, bdef.skill.desc, '#e8dcc0');
-    sec('大招', `【${bdef.ult.name}】`, bdef.ult.desc, '#e8a060');
-    if (ACT.byHero[name] && blv < 3) {
-      const L = ACT.byHero[name].levels[blv];
-      sec('下一突', `【${L.title}】`, L.summary, '#ffcf5a');
-    }
-    const allB = JQ.BOND_BY_HERO[name] || [];
-    if (allB.length) {
-      const by = Math.max(yy + 12, 852);
-      text(g, '羁绊', 82, by, 13, '#e6b04a', { align: 'left', font: 'sans-serif', bold: false });
-      allB.slice(0, 4).forEach((b, i) => text(g, `· ${b.name}：${b.heroes.join('、')}`, 132, by + i * 24, 13, '#d8c8a0', { align: 'left', font: 'sans-serif', bold: false }));
-    }
-    if (name !== prog.main) button(90, 1000, 250, 58, '设为本命将', () => (setMain(name), sfx('tap')), { flat: true, size: 20 });
-    button(380, 1000, 240, 58, '关 闭', () => (rosterSel = null), { size: 20 });
+      by += 70;
+    });
+    if (name !== prog.main) button(X + 40, by2 + 18, 280, 66, '设为本命将', () => (setMain(name), sfx('tap')), { on: true, size: 24 });
+    button(name !== prog.main ? X + W - 320 : X + W / 2 - 140, by2 + 18, 280, 66, '关 闭', () => (rosterSel = null), { size: 24 });
   }
   function drawRoster() {
-    pageFrame('英雄图鉴', 0.85);
+    pageFrame('英雄图鉴', 0.85, () => ((helpPage = 0), (screen = helpBack)));
     JQ.preloadUiArt();
+    const T = pageTop() + 96, B = pageBottom();
     const tabs = JQ.OPEN_PACKS.concat('bonds');
-    const gap = 8, tabW = Math.min(150, (C.W - 40 - gap * (tabs.length - 1)) / tabs.length), x0 = (C.W - (tabs.length * tabW + (tabs.length - 1) * gap)) / 2;
-    tabs.forEach((k, i) => button(x0 + i * (tabW + gap), 82, tabW, 44, k === 'bonds' ? '羁绊' : JQ.PACKS[k].name, () => (helpPack = k), { on: helpPack === k, size: 20 }));
+    segmented(24, T, 672, 52, tabs.map((k) => [k, k === 'bonds' ? '羁绊' : JQ.PACKS[k].name]), helpPack, (k) => (helpPack = k), 19);
     if (helpPack === 'bonds') return drawBondList();
     const roster = (JQ.PACKS[helpPack] && JQ.PACKS[helpPack].heroes) || [];
     if (!roster.length) text(g, '这个卡包还没有配置英雄（自定义卡包点「自定义卡包」选 16 位）', C.W / 2, 300, 20, '#bfb39a', { bold: false });
-    text(g, `${JQ.PACKS[helpPack].name} · ${roster.length} 位英雄 · 点卡片看详情`, C.W / 2, 145, 13, '#d8c8a0', { font: 'sans-serif', bold: false });
+    text(g, `${JQ.PACKS[helpPack].name} · ${roster.length} 位英雄 · 突破后解锁立绘 · 点卡片看详情`, C.W / 2, T + 76, 15, '#e0d0a8', { font: 'sans-serif', bold: false });
+    const top = T + 96, gap = 10, rows = Math.max(1, Math.ceil(roster.length / 4));
+    const tw = (672 - gap * 3) / 4, th = Math.min(270, (B - top - gap * (rows - 1)) / rows);
     roster.forEach((name, i) => {
       if (!HEROES[name]) return;
-      const col = i % 4, row = Math.floor(i / 4);
-      drawHeroTile(name, 16 + col * 172, 160 + row * 154, 160, 142);
+      drawHeroTile(name, 24 + (i % 4) * (tw + gap), top + Math.floor(i / 4) * (th + gap), tw, th);
     });
-    if (!rosterSel) {
-      text(g, '点卡片看完整被动 / 技能 / 大招 · 点空白处返回', C.W / 2, 1080, 13, '#bfb39a', { font: 'sans-serif', bold: false });
-      button(210, 1120, 300, 58, '返 回', () => ((helpPage = 0), (screen = helpBack)), { size: 24 });
-      iconBtn(650, 22, 52, '×', () => ((helpPage = 0), (screen = helpBack)));
-    }
     if (rosterSel) drawHeroDetail(rosterSel);
   }
 
@@ -2016,26 +2491,21 @@
       for (const k of Object.keys(PN)) if (b.heroes.every((h) => JQ.heroInPack(h, k))) return PN[k];
       return '跨包';
     };
-    text(g, '指定英雄同时在棋盘上合成即生效；跨包羁绊只能在自定义卡包里凑', C.W / 2, 142, 13, '#d8c8a0', { font: 'sans-serif', bold: false });
+    const T = pageTop() + 96, top = T + 96, rows = Math.ceil(JQ.BONDS.length / 2);
+    const rh = Math.min(84, (pageBottom() - top) / rows), h = rh - 8;
+    text(g, '指定英雄同时在棋盘上合成即生效；跨包羁绊只能在自定义卡包里凑', C.W / 2, T + 76, 15, '#e0d0a8', { font: 'sans-serif', bold: false });
     JQ.BONDS.forEach((b, i) => {
-      const x = i % 2 ? 366 : 22, y = 160 + Math.floor(i / 2) * 70, w = 332, h = 64;
-      g.save();
-      g.fillStyle = 'rgba(255,240,210,0.07)';
-      JQ.rr(g, x, y, w, h, 10);
-      g.fill();
-      g.strokeStyle = 'rgba(230,194,122,0.35)';
-      g.lineWidth = 1;
-      g.stroke();
-      g.restore();
-      text(g, b.name, x + 10, y + 16, 17, '#ffcf5a', { align: 'left' });
-      text(g, packOf(b), x + w - 8, y + 16, 11, '#9a8f7a', { align: 'right', font: 'sans-serif', bold: false });
-      text(g, b.heroes.join('、'), x + 112, y + 17, 12, '#f0e4c8', { align: 'left', font: 'sans-serif', bold: false });
+      const x = i % 2 ? 364 : 24, y = top + Math.floor(i / 2) * rh, w = 332;
+      card(x, y, w, h, { r: 10 });
+      text(g, b.name, x + 10, y + 20, 18, '#ffcf5a', { align: 'left' });
+      text(g, packOf(b), x + w - 8, y + 20, 11, '#9a8f7a', { align: 'right', font: 'sans-serif', bold: false });
+      text(g, b.heroes.join('、'), x + 112, y + 21, 13, '#f0e4c8', { align: 'left', font: 'sans-serif', bold: false });
       const tl = b.tiers.map((t) => `${t.n}人：${JQ.bondTierText(t)}`).join('  ');
       // 已生效颜色只用米金，避免和等级绿撞色
       let z = 11.5;
       g.font = `${z}px sans-serif`;
       while (z > 8.5 && g.measureText(tl).width > w - 20) (z -= 0.5), (g.font = `${z}px sans-serif`);
-      text(g, tl, x + 10, y + 44, z, '#d9c79a', { align: 'left', font: 'sans-serif', bold: false });
+      text(g, tl, x + 10, y + h - 16, z, '#d9c79a', { align: 'left', font: 'sans-serif', bold: false });
     });
   }
 
@@ -2073,6 +2543,15 @@
   }
 
   const CAT_ICON = { 经济: 'support', 卡池: 'special', 兵种: 'warrior', 英雄: 'commander', 防守: 'tank', 特殊: 'special' };
+  function talentSeal(t, x, y, s) {
+    JQ.rr(g, x, y, s, s, Math.max(3, s * 0.16));
+    g.fillStyle = 'rgba(168,40,26,0.92)';
+    g.fill();
+    g.strokeStyle = 'rgba(240,200,120,0.8)';
+    g.lineWidth = 1;
+    g.stroke();
+    text(g, t.name[0], x + s / 2, y + s / 2 + 1, s * 0.56, '#fff1d0', { stroke: '#5a0a04', strokeW: 2 });
+  }
   function catChip(t, x, y) {
     // 分类签统一墨色，不借用等级色；左边加一个生成的小徽章
     g.save();
@@ -2104,92 +2583,126 @@
     g.restore();
   }
 
+  let talentFilter = '全部', talentHelp = false;
+  const TALENT_ART = {
+    经济: 'talent_economy', 卡池: 'talent_cardpool', 兵种: 'talent_unit',
+    英雄: 'talent_hero', 防守: 'talent_defense', 特殊: 'talent_special',
+  };
+  function talentArt(t, x, y, w, h) {
+    if (JQ.assetCover(g, TALENT_ART[t.cat], x, y, w, h)) {
+      g.save();
+      JQ.rr(g, x, y, w, h, 8);
+      g.clip();
+      const grd = g.createLinearGradient(0, y + h * 0.45, 0, y + h);
+      grd.addColorStop(0, 'rgba(16,10,6,0)');
+      grd.addColorStop(1, 'rgba(16,10,6,0.9)');
+      g.fillStyle = grd;
+      g.fillRect(x, y + h * 0.45, w, h * 0.55);
+      g.restore();
+    } else {
+      const grd = g.createLinearGradient(0, y, 0, y + h);
+      grd.addColorStop(0, 'rgba(70,42,16,0.85)');
+      grd.addColorStop(1, 'rgba(20,12,8,0.95)');
+      JQ.rr(g, x, y, w, h, 8);
+      g.fillStyle = grd;
+      g.fill();
+      JQ.roleIconDraw(g, CAT_ICON[t.cat], x + w / 2 - 28, y + h / 2 - 28, 56);
+    }
+  }
+  function drawTalentHelp() {
+    buttons.push({ x: -padX, y: -padY, w: C.W + 2 * padX, h: C.H + 2 * padY, fn: () => (talentHelp = false) });
+    veil(0.66);
+    popFrame(100, 220, 520, 560, '天赋规则');
+    buttons.push({ x: 100, y: 220, w: 520, h: 560, fn: () => {} });
+    iconBtn(558, 200, 48, '×', () => (talentHelp = false));
+    const lines = [
+      '每赢一局：金币 + 解锁下一关 + 刷新商店；输一局：12 金币，留在本关。',
+      '商店每次刷 3 条随机天赋，已拥有的不再出现。',
+      '最多同时装备 3 条；点击已拥有的天赋即可装备 / 卸下。',
+      '天赋只在「天命」模式生效。',
+    ];
+    let y = 330;
+    lines.forEach((s) => {
+      wrapLines(s, 22).forEach((l) => {
+        text(g, l, 140, y, 15, '#e8dcc0', { align: 'left', font: 'sans-serif', bold: false });
+        y += 26;
+      });
+      y += 12;
+    });
+  }
   function drawTalents() {
     if (!fateSave.offers) rollOffers();
-    pageFrame('天 赋');
-    // 金币与关卡
-    const fe = JQ.fateEnemy(fateSave.tier);
-    panel(30, 80, 660, 56, 'rgba(255,230,170,0.08)', 'rgba(255,220,150,0.35)');
-    // 铜钱图标（和局内的包子区分开）
-    g.save();
-    if (JQ.uiDraw(g, 'coin', 44, 90, 36, 36)) g.globalAlpha = 0;
-    g.fillStyle = '#e8b830';
-    g.strokeStyle = '#8a6010';
-    g.lineWidth = 2;
-    g.beginPath();
-    g.arc(62, 108, 14, 0, Math.PI * 2);
-    g.fill();
-    g.stroke();
-    g.fillStyle = '#2a1e10';
-    g.fillRect(57, 103, 10, 10);
-    g.restore();
-    text(g, `${fateSave.coins}`, 84, 109, 24, '#ffd23f', { align: 'left', font: 'sans-serif' });
-    text(g, `第 ${fateSave.tier} 关`, 300, 100, 22, '#f5ead0');
-    text(g, `对手 ${fe.talents} 条天赋 · 敌方强度 ×${JQ.stageBoost(fateSave.tier).toFixed(2)}`, 300, 122, 13, '#bfb39a', { font: 'sans-serif', bold: false });
-    text(g, '赢：金币 + 解锁下一关 + 刷新商店', 560, 100, 13, '#9fe0a0', { font: 'sans-serif', bold: false });
-    text(g, '输：12 金币，留在本关', 560, 120, 13, '#e0a090', { font: 'sans-serif', bold: false });
-
-    // 商店：3 张随机天赋
-    JQ.uiDraw(g, 'chest', C.W / 2 - 92, 146, 44, 36);
-    text(g, '商 店', C.W / 2, 166, 24, '#ffd23f');
-    text(g, '每赢一局刷新一次', C.W / 2, 190, 13, '#bfb39a', { font: 'sans-serif', bold: false });
+    pageFrame('天 赋', 0.78, () => (screen = 'menu'));
+    JQ.preloadUiArt();
+    const T = pageTop() + 96, B = pageBottom();
+    // 顶部：天命金币 + 当前关 + 规则
+    resPill(24, T, 230, (x, y, s2) => JQ.uiDraw(g, 'coin', x + 4, y + 4, s2 - 8, s2 - 8), fateSave.coins, null);
+    text(g, '天命金币', 250, T + 21, 13, '#d8c8a0', { align: 'right', font: 'sans-serif', bold: false });
+    resPill(270, T, 190, (x, y, s2) => JQ.iconDraw(g, 'stage', x, y, s2, s2), `第 ${fateSave.tier} 关`, null);
+    button(560, T - 4, 136, 48, '规则', () => (talentHelp = !talentHelp), { flat: true, size: 19 });
+    // 商店：3 张卡，插画为主，名字大，说明最多两行
+    const shopY = T + 58, shopH = Math.max(320, Math.min(480, (B - shopY) * 0.42));
+    text(g, '商店 · 每赢一局刷新', 24, shopY + 14, 19, '#ffd23f', { align: 'left' });
     const offers = (fateSave.offers || []).map((id) => JQ.TALENT_BY_ID[id]).filter(Boolean);
-    if (!offers.length) text(g, '这一批已经买完了，赢下一局再来看看', C.W / 2, 300, 18, '#bfb39a', { bold: false });
+    if (!offers.length) text(g, '这一批已经买完了，赢下一局再来看看', C.W / 2, shopY + shopH / 2, 20, '#bfb39a', { bold: false });
     offers.forEach((t, i) => {
-      const x = 24 + i * 228, y = 206, w = 216, h = 250;
+      const x = 24 + i * 228, y = shopY + 32, w = 216, h = shopH - 32;
       const can = fateSave.coins >= t.cost;
-      const paper = JQ.ui9(g, 'card', x, y, w, h, 34, 26);
-      if (!paper) panel(x, y, w, h, 'rgba(255,240,210,0.07)', 'rgba(230,194,122,0.6)', 2);
-      catChip(t, x + 16, y + 16);
-      text(g, t.name, x + w / 2, y + 66, 30, paper ? '#3a2008' : '#f5ead0');
-      wrapLines(t.desc, 12).slice(0, 4).forEach((l, k) => text(g, l, x + w / 2, y + 108 + k * 22, 15, paper ? '#5a4630' : '#d8c8a0', { bold: false, font: 'sans-serif' }));
-      button(x + 18, y + h - 62, w - 36, 48, can ? `${t.cost} 金币 买` : `差 ${t.cost - fateSave.coins} 金币`, () => buyTalent(t), { on: can, disabled: !can, size: 22 });
+      card(x, y, w, h, { r: 14 });
+      const ah = h * 0.42;
+      talentArt(t, x + 4, y + 4, w - 8, ah);
+      catChip(t, x + 10, y + 10);
+      text(g, t.name, x + w / 2, y + ah + 34, 28, '#ffe9a0', { stroke: '#1a0c04', strokeW: 4 });
+      wrapLines(t.desc, 11).slice(0, 2).forEach((l, k) => text(g, l, x + w / 2, y + ah + 70 + k * 24, 16, '#e8d8b0', { bold: false, font: 'sans-serif' }));
+      button(x + 14, y + h - 62, w - 28, 50, can ? `${t.cost} 金币` : `差 ${t.cost - fateSave.coins}`, () => buyTalent(t), { on: can, disabled: !can, size: 22 });
     });
-
-    // 已装备
-    text(g, `已装备 ${fateSave.equipped.length}/${JQ.MAX_TALENTS}`, C.W / 2, 494, 22, '#ffd23f');
+    // 已装备：三个大槽位
+    const eqY = shopY + shopH + 18;
+    text(g, `已装备 ${fateSave.equipped.length}/${JQ.MAX_TALENTS}`, 24, eqY + 14, 19, '#ffd23f', { align: 'left' });
     for (let i = 0; i < JQ.MAX_TALENTS; i++) {
-      const x = 24 + i * 228, y = 512;
+      const x = 24 + i * 228, y = eqY + 32, w = 216, h = 92;
       const t = JQ.TALENT_BY_ID[fateSave.equipped[i]];
       if (!t) {
-        g.save();
-        if (!JQ.ui9(g, 'slot', x, y, 216, 70, 30, 18)) (g.setLineDash([6, 5]), panel(x, y, 216, 70, 'rgba(255,255,255,0.03)', 'rgba(255,240,200,0.3)'));
-        g.restore();
-        text(g, '空位', x + 108, y + 36, 18, '#8a806c', { bold: false });
+        card(x, y, w, h, { dim: true, r: 14 });
+        text(g, '＋', x + w / 2, y + h / 2 - 6, 34, 'rgba(240,200,120,0.4)', { font: 'sans-serif' });
+        text(g, '点下方天赋装备', x + w / 2, y + h - 16, 13, '#8a806c', { font: 'sans-serif', bold: false });
         continue;
       }
-      buttons.push({ x, y, w: 216, h: 70, fn: () => toggleEquip(t) });
-      panel(x, y, 216, 70, 'rgba(240,170,40,0.22)', '#ffc020', 2.5);
-      catChip(t, x + 10, y + 10);
-      text(g, t.name, x + 116, y + 26, 22, '#ffd23f');
-      text(g, '点击卸下', x + 116, y + 52, 12, '#d8c8a0', { font: 'sans-serif', bold: false });
+      buttons.push({ x, y, w, h, fn: () => toggleEquip(t) });
+      card(x, y, w, h, { r: 14, light: true });
+      talentArt(t, x + 4, y + 4, 84, h - 8);
+      text(g, t.name, x + 100, y + 40, 21, '#ffe08a', { align: 'left' });
+      text(g, '点击卸下', x + 100, y + 66, 13, '#c8b090', { align: 'left', font: 'sans-serif', bold: false });
     }
-
-    // 已拥有
-    const owned = fateSave.owned.map((id) => JQ.TALENT_BY_ID[id]).filter(Boolean);
-    text(g, `已拥有 ${owned.length}/${JQ.TALENTS.length} · 点击装备`, C.W / 2, 620, 20, '#f5ead0');
-    if (!owned.length) {
-      text(g, '还没有天赋，赢一局拿金币来商店买吧', C.W / 2, 662, 16, '#8a806c', { bold: false });
-      // 空状态：把 6 个天赋分类做成图标卡，别让下半屏空着
-      ['经济', '卡池', '兵种', '英雄', '防守', '特殊'].forEach((c, i) => {
-        const x = 24 + (i % 3) * 228, y = 700 + Math.floor(i / 3) * 104, n = JQ.TALENTS.filter((t) => t.cat === c).length;
-        panel(x, y, 216, 88, 'rgba(255,240,210,0.05)', 'rgba(230,194,122,0.22)');
-        JQ.roleIconDraw(g, CAT_ICON[c], x + 10, y + 20, 46);
-        text(g, c, x + 66, y + 36, 19, '#ffe9a0', { align: 'left' });
-        text(g, `${n} 条`, x + 66, y + 58, 12, '#c8b090', { align: 'left', font: 'sans-serif', bold: false });
+    // 已拥有：分类标签 + 插画小卡
+    const ownY = eqY + 140, owned = fateSave.owned.map((id) => JQ.TALENT_BY_ID[id]).filter(Boolean);
+    const cats = ['全部', '经济', '卡池', '兵种', '英雄', '防守', '特殊'];
+    segmented(24, ownY, 672, 46, cats.map((c) => [c, c]), talentFilter, (c) => (talentFilter = c), 16);
+    const shown = owned.filter((t) => talentFilter === '全部' || t.cat === talentFilter);
+    const gy = ownY + 58, avail = B - gy;
+    if (!shown.length) {
+      // 空状态：六类插画大卡，告诉玩家能收集什么
+      const cs = ['经济', '卡池', '兵种', '英雄', '防守', '特殊'], th = Math.min(240, (avail - 44) / 2);
+      cs.forEach((c, i) => {
+        const x = 24 + (i % 3) * 228, y = gy + Math.floor(i / 3) * (th + 10);
+        card(x, y, 216, th, { dim: true, r: 14 });
+        talentArt({ cat: c }, x + 4, y + 4, 208, th - 8);
+        text(g, c, x + 108, y + th - 26, 22, '#ffe9a0', { stroke: '#1a0c04', strokeW: 4 });
       });
+      text(g, owned.length ? '这个分类还没有天赋' : `还没有天赋 · 共 ${JQ.TALENTS.length} 条可收集`, C.W / 2, Math.min(B - 10, gy + 2 * th + 34), 16, '#c8b090', { font: 'sans-serif', bold: false });
     }
-    owned.forEach((t, i) => {
-      const x = 24 + (i % 3) * 228, y = 640 + Math.floor(i / 3) * 74;
-      if (y > 1110) return;
+    const rh = 76;
+    shown.forEach((t, i) => {
+      const x = 24 + (i % 3) * 228, y = gy + Math.floor(i / 3) * (rh + 8);
+      if (y + rh > B) return;
       const on = fateSave.equipped.includes(t.id);
-      buttons.push({ x, y, w: 216, h: 66, fn: () => toggleEquip(t) });
-      panel(x, y, 216, 66, on ? 'rgba(240,170,40,0.22)' : 'rgba(255,240,210,0.06)', on ? '#ffc020' : 'rgba(255,240,200,0.3)', on ? 2.5 : 1.5);
-      catChip(t, x + 8, y + 8);
-      text(g, t.name, x + 60, y + 19, 18, on ? '#ffd23f' : '#f5ead0', { align: 'left' });
-      text(g, t.desc.slice(0, 15), x + 10, y + 48, 12, '#bfb39a', { align: 'left', font: 'sans-serif', bold: false });
+      buttons.push({ x, y, w: 216, h: rh, fn: () => toggleEquip(t) });
+      card(x, y, 216, rh, { r: 12, light: on });
+      talentArt(t, x + 4, y + 4, 68, rh - 8);
+      text(g, t.name, x + 82, y + rh / 2 + 1, t.name.length > 4 ? 17 : 20, on ? '#ffe08a' : '#f5ead0', { align: 'left' });
+      if (on) (JQ.rr(g, x, y, 216, rh, 12), (g.strokeStyle = '#ffe08a'), (g.lineWidth = 2.5), g.stroke());
     });
-    button(210, 1196, 300, 60, '返 回', () => (screen = 'menu'), { on: true, size: 28 });
+    if (talentHelp) drawTalentHelp();
   }
 
   function buyTalent(t) {
@@ -2225,6 +2738,7 @@
     g.strokeStyle = stroke;
     g.stroke();
   }
+  let overH = 0;
   function drawOver() {
     const k = (performance.now() - overAt) / 1000;
     const w = game.winner;
@@ -2233,7 +2747,7 @@
     const win = game.R.waves ? true : w === 0;
     const rw = lastReward, pg = lastProg, mv = lastMvp;
     veil(Math.min(0.5, k * 1.5));
-    const px = 50, py = 150, pw = 620, ph = 930;
+    const px = 50, py = 150, pw = 620, ph = overH || 930; // 面板高度用上一帧量出的内容高度，底下不留空
     // 赢：背后金色光芒慢转 + 花瓣飘落
     JQ.fxBudgetReset();
     if (win && !JQ.fxSprite(g, 'rays', C.W / 2, py + 30, 820, 1093, Math.min(0.85, k * 1.2), k * 0.2)) {
@@ -2313,85 +2827,93 @@
     text(g, `${game.mode.name} · ${game.diff.name} · 用时 ${Math.floor(t / 60)}分${t % 60}秒`, C.W / 2, y + 42, 14, '#bfa878', { font: 'sans-serif', bold: false });
     y += 62;
     const roll = (v) => Math.round(v * Math.max(0, Math.min(1, (k - 0.3) / 0.8)));
-    // MVP
+    // MVP：字牌 + 输出大数字 + 占比条
     if (mv && (mv.hero || mv.unit)) {
-      const card = (x, item, tag) => {
+      const mvp = (x, item, tag) => {
         if (!item) return;
-        const name = item.key;
-        const box = 64;
-        if (tag === 'MVP 英雄' && JQ.ui2Draw(g, 'laurel', x - 16, y - 18, 96, 99));
-        else if (!JQ.ui9(g, 'card', x, y, box, box, 34, 14)) panel(x, y, box, box, '#f3ead3', '#6a4a20', 2);
-        text(g, name.length > 1 ? name : name, x + box / 2, y + box / 2 + 2, name.length > 1 ? 24 : 34, '#2a1a08');
-        text(g, tag, x + box + 10, y + 12, 13, '#ffcf5a', { align: 'left' });
-        text(g, `输出 ${roll(item.dmg).toLocaleString()}`, x + box + 10, y + 34, 15, '#fff3d6', { align: 'left', font: 'sans-serif' });
-        text(g, `${Math.round((item.dmg / mv.total) * 100)}% · 击杀 ${item.kills}`, x + box + 10, y + 54, 12, '#bfa878', { align: 'left', font: 'sans-serif', bold: false });
+        card(x, y, 260, 96, { r: 14 });
+        paperTile(item.key, x + 10, y + 10, 76, 76, { on: tag === 'MVP' });
+        JQ.rr(g, x + 96, y + 10, 64, 24, 12);
+        g.fillStyle = tag === 'MVP' ? '#a82818' : '#5a3a14';
+        g.fill();
+        text(g, tag, x + 128, y + 22, 13, '#fff1d8', { font: 'sans-serif' });
+        text(g, roll(item.dmg).toLocaleString(), x + 96, y + 56, 26, '#ffe9a0', { align: 'left', font: 'sans-serif', stroke: '#1a0c04', strokeW: 3 });
+        const f = item.dmg / mv.total;
+        JQ.rr(g, x + 96, y + 74, 150, 10, 5);
+        g.fillStyle = 'rgba(0,0,0,0.45)';
+        g.fill();
+        JQ.rr(g, x + 96, y + 74, Math.max(10, 150 * f), 10, 5);
+        g.fillStyle = '#e6b04a';
+        g.fill();
       };
-      card(px + 40, mv.hero, 'MVP 英雄');
-      card(px + 330, mv.unit, '最强兵种');
-      y += 84;
+      mvp(px + 40, mv.hero, 'MVP');
+      mvp(px + 320, mv.unit, '最强兵');
+      y += 112;
     }
-    // 我/敌 对比条
+    // 我/敌 对比条：左侧图标代替文字标签
     const A = game.sides[0].stats, B = game.sides[1].stats;
     [
-      ['召唤', A.summoned, B.summoned],
-      ['击杀', A.kills, B.kills],
-      ['英雄出场', A.heroes, B.heroes],
-      ['基地伤害', Math.round(A.baseDmg), Math.round(B.baseDmg)],
-    ].forEach(([label, x0, y0], i) => {
-      const ry = y + i * 42, tot = Math.max(1, x0 + y0), half = 210;
+      ['summon', A.summoned, B.summoned],
+      ['atk', A.kills, B.kills],
+      ['buff', A.heroes, B.heroes],
+      ['fire', Math.round(A.baseDmg), Math.round(B.baseDmg)],
+    ].forEach(([id, x0, y0], i) => {
+      const ry = y + i * 44, tot = Math.max(1, x0 + y0), half = 180, cx = C.W / 2 + 20;
       const kk = Math.max(0, Math.min(1, (k - 0.3 - i * 0.08) / 0.6));
-      text(g, label, C.W / 2, ry, 14, '#e8dcc0', { font: 'sans-serif', bold: false });
+      JQ.statIcon(g, id, px + 40, ry - 2, 36);
       g.save();
-      JQ.rr(g, C.W / 2 - half, ry + 10, half * 2, 10, 5);
-      g.fillStyle = 'rgba(255,255,255,0.08)';
+      JQ.rr(g, cx - half, ry + 8, half * 2, 16, 8);
+      g.fillStyle = 'rgba(0,0,0,0.4)';
       g.fill();
       g.fillStyle = '#3d8bff';
       const wa = ((half * x0) / tot) * kk, wb = ((half * y0) / tot) * kk;
-      if (wa > 1) (JQ.rr(g, C.W / 2 - wa, ry + 10, wa, 10, 5), g.fill());
+      if (wa > 1) (JQ.rr(g, cx - wa, ry + 8, wa, 16, 8), g.fill());
       g.fillStyle = '#e0503a';
-      if (wb > 1) (JQ.rr(g, C.W / 2, ry + 10, wb, 10, 5), g.fill());
+      if (wb > 1) (JQ.rr(g, cx, ry + 8, wb, 16, 8), g.fill());
       g.restore();
-      text(g, String(roll(x0)), C.W / 2 - half - 8, ry + 15, 17, '#cfe6ff', { align: 'right', font: 'sans-serif' });
-      text(g, String(roll(y0)), C.W / 2 + half + 8, ry + 15, 17, '#ffd2c8', { align: 'left', font: 'sans-serif' });
+      text(g, String(roll(x0)), cx - half - 8, ry + 17, 19, '#cfe6ff', { align: 'right', font: 'sans-serif' });
+      text(g, String(roll(y0)), cx + half + 8, ry + 17, 19, '#ffd2c8', { align: 'left', font: 'sans-serif' });
     });
-    y += 4 * 42 + 6;
-    // 奖励：主公经验、将魂、宝箱、金币
+    y += 4 * 44 + 10;
+    // 奖励：一排奖励格（图标 + 大数字），不再写成长句
     if (pg) {
-      g.save();
-      g.fillStyle = 'rgba(255,230,170,0.08)';
-      JQ.rr(g, px + 36, y, pw - 72, 132, 10);
-      g.fill();
-      g.restore();
+      const items = [['xp', `+${pg.xp}`], ['coin', `+${roll(pg.coins)}`]];
+      if (pg.tokens) items.push(['token', `+${pg.tokens}`]);
+      if (rw && rw.act && rw.act.win) items.push(['stone', `+${roll(rw.act.stone)}`], ['seal', `+${roll(rw.act.seal)}`]);
+      if (pg.chest) items.push(['chest', `×${pg.chest}`]);
+      if (rw && rw.coins) items.push(['gold', `+${rw.coins}`]);
+      const n = Math.min(5, items.length), iw = Math.min(104, (pw - 80 - (n - 1) * 10) / n), ix0 = C.W / 2 - (n * iw + (n - 1) * 10) / 2;
+      items.slice(0, 5).forEach(([id, v], i) => {
+        const x = ix0 + i * (iw + 10), pop = Math.max(0, Math.min(1, (k - 0.8 - i * 0.12) / 0.25));
+        if (pop <= 0) return;
+        card(x, y, iw, 104, { r: 12, light: true });
+        const is = 50, ix = x + iw / 2 - is / 2, iy = y + 8;
+        if (id === 'xp') JQ.ui2Draw(g, 'badge', ix + 6, iy, 38, 44);
+        else if (id === 'coin' || id === 'gold') JQ.uiDraw(g, 'coin', ix + 4, iy + 4, is - 8, is - 8);
+        else if (id === 'token') qxIcon(ix, iy, is);
+        else if (id === 'stone') JQ.iconDraw(g, 'stone', ix, iy, is, is) || actStoneIcon(ix, iy, is);
+        else if (id === 'seal') actPortraitCircle(rw.act.hero, ix, iy, is);
+        else if (id === 'chest') JQ.ui2Draw(g, 'chest_open', ix, iy, is, is);
+        text(g, v, x + iw / 2, y + 82, 22, '#ffe08a', { font: 'sans-serif', stroke: '#1a0c04', strokeW: 3 });
+      });
+      y += 116;
+      // 主公经验条 + 本命将状态（一行）
       const xpK = Math.max(0, Math.min(1, (k - 0.8) / 0.8));
-      JQ.ui2Draw(g, 'badge', px + 44, y + 2, 28, 32);
-      text(g, `主公 Lv${prog.lv}`, px + 78, y + 20, 17, '#ffe9a0', { align: 'left' });
-      g.save();
-      JQ.rr(g, px + 176, y + 14, 284, 10, 5);
-      g.fillStyle = 'rgba(255,255,255,0.12)';
+      text(g, `主公 Lv${prog.lv}${pg.lvUps ? ' ↑' : ''}`, px + 40, y + 12, 18, pg.lvUps ? '#ffd23f' : '#ffe9a0', { align: 'left' });
+      JQ.rr(g, px + 170, y + 5, 230, 14, 7);
+      g.fillStyle = 'rgba(0,0,0,0.4)';
       g.fill();
-      JQ.rr(g, px + 176, y + 14, Math.max(6, 284 * (prog.xp / lvNeed(prog.lv)) * xpK), 10, 5);
+      JQ.rr(g, px + 170, y + 5, Math.max(14, 230 * (prog.xp / lvNeed(prog.lv)) * xpK), 14, 7);
       g.fillStyle = '#e6b04a';
       g.fill();
-      g.restore();
-      text(g, `+${pg.xp} 经验` + (pg.lvUps ? `  升级！` : ''), px + 474, y + 20, 14, pg.lvUps ? '#ffd23f' : '#d8c8a0', { align: 'left', font: 'sans-serif' });
-      JQ.uiDraw(g, 'coin', px + 46, y + 40, 24, 24);
-      text(g, `铜钱 +${roll(pg.coins)}   共 ${prog.coins}`, px + 78, y + 54, 15, '#ffd23f', { align: 'left', font: 'sans-serif' });
-      const extra = [];
-      if (rw && rw.act && rw.act.win) extra.push(`破阵石 +${roll(rw.act.stone)} · ${rw.act.hero}将印 +${roll(rw.act.seal)}${rw.act.first ? ' · 首通' : ''}`);
       if (prog.main) {
-        const lv = heroLvOf(prog.main), cost = upCost(lv), can = lv < heroCap(prog.main) && prog.coins >= cost;
-        extra.push(`本命将 ${prog.main} Lv${lv}` + (pg.mainUsed ? ' · 本局出战 +10 铜钱' : ' · 本局没上场') + (can ? ' · 可以升级了！' : ''));
-      } else extra.push('还没有本命将：主菜单底栏「本命将」里挑一位');
-      if (pg.chest) extra.push(`星级宝箱 ×${pg.chest}：铜钱 +${150 * pg.chest}`);
-      if (pg.lvUps) extra.push(`主公升级奖励：铜钱 +${100 * pg.lvUps}`);
-      if (rw && rw.coins) extra.push(`金币 +${rw.coins}${rw.shop ? ' · 商店已刷新' : ''}`);
-      extra.slice(0, 2).forEach((l, i) => {
-        if (l.startsWith('星级宝箱')) JQ.ui2Draw(g, 'chest_open', px + 44, y + 70 + i * 26, 28, 28);
-        text(g, l, px + (l.startsWith('星级宝箱') ? 78 : 52), y + 84 + i * 26, 14, '#ffd23f', { align: 'left', font: 'sans-serif' });
-      });
-      y += 146;
+        const lv = heroLvOf(prog.main), can = lv < heroCap(prog.main) && prog.coins >= upCost(lv);
+        text(g, `${prog.main} Lv${lv}${can ? ' 可升级' : ''}`, px + pw - 40, y + 12, 17, can ? '#ffd23f' : '#d8c8a0', { align: 'right' });
+        if (can) redDot(px + pw - 30, y - 2, 7);
+      }
+      y += 34;
     }
-    if (!win && w === 1 && k > 1) text(g, tipOnLose(), C.W / 2, y + 2, 14, '#f0c0a0', { font: 'sans-serif', bold: false });
+    if (!win && w === 1 && k > 1) text(g, tipOnLose(), C.W / 2, y + 4, 16, '#f0c0a0', { font: 'sans-serif', bold: false });
     y += 20;
     const canNext = rw && rw.win && !rw.max && staged;
     button(110, y, 500, 84, act ? '再 战' : canNext ? `下一关 · 第 ${rw.next} 关` : staged ? `重试第 ${game.stage} 关` : '再来一局', () => {
@@ -2405,6 +2927,7 @@
     sec.push(['返回主页', () => (screen = 'menu')]);
     const sw = (500 - (sec.length - 1) * 14) / sec.length;
     sec.forEach(([label, fn], i) => button(110 + i * (sw + 14), y + 98, sw, 60, label, fn, { size: 22 }));
+    overH = y + 98 + 60 + 44 - py;
     // 花瓣
     if (win && k < 6) {
       g.save();
@@ -2440,142 +2963,105 @@
     JQ.preloadUiArt();
     screen = 'mainhero';
   }
+  // 宣纸字牌（没有立绘时的英雄卡面）
+  function paperTile(name, x, y, w, h, opts) {
+    opts = opts || {};
+    JQ.rr(g, x, y, w, h, opts.r || 10);
+    const pg = g.createLinearGradient(0, y, 0, y + h);
+    pg.addColorStop(0, opts.on ? '#fff3c4' : '#f6eed8');
+    pg.addColorStop(1, opts.on ? '#e8b850' : '#dccba2');
+    g.fillStyle = pg;
+    g.fill();
+    if (opts.on) (g.strokeStyle = '#a82818'), (g.lineWidth = 3), g.stroke();
+    const hd = HEROES[name];
+    if (opts.vertical) {
+      const cs = Math.min(w * 0.62, h * 0.38);
+      text(g, hd.chars[0], x + w / 2, y + h * 0.3, cs, '#2a1608');
+      text(g, hd.chars[1], x + w / 2, y + h * 0.7, cs, '#2a1608');
+    } else text(g, name, x + w / 2, y + h / 2 + 1, Math.min(h * 0.46, (w * 0.84) / name.length), '#2a1608');
+  }
+  // 本命将：上半是大卡 + 等级 + 加成大数字 + 升级；下半按卡包选将（字牌网格铺满）
   function drawMainHero() {
-    if (menuGame) JQ.render(menuGame, menuView);
-    pageFrame('本命将');
-    const now = performance.now();
-    // 铜钱
-    JQ.uiDraw(g, 'coin', 536, 92, 30, 30);
-    text(g, String(prog.coins), 572, 108, 22, '#ffd23f', { align: 'left', font: 'sans-serif', stroke: '#2a1a08', strokeW: 3 });
+    JQ.drawBackdrop(g);
+    pageFrame('本命将', 0.78, () => (screen = 'menu'));
+    const now = performance.now(), T = pageTop() + 96, B = pageBottom();
+    resPill(470, T, 226, (x, y, s2) => JQ.uiDraw(g, 'coin', x + 4, y + 4, s2 - 8, s2 - 8), prog.coins, null);
     const name = prog.main;
+    const cy = T + 56, chH = Math.round(Math.min(470, Math.max(380, (B - cy - 72) * 0.5)));
     if (!name) {
-      text(g, '还没有本命将', C.W / 2, 210, 30, '#ffe9a0', { stroke: '#2a1a08', strokeW: 4 });
-      text(g, '在下面挑一位你最喜欢的英雄。只有本命将能用铜钱升级，', C.W / 2, 252, 15, '#d8c8a0', { font: 'sans-serif', bold: false });
-      text(g, '出战时攻击和血量随等级提高，开局也更容易刷到他的字。', C.W / 2, 276, 15, '#d8c8a0', { font: 'sans-serif', bold: false });
-      // 空状态用本期三位活动英雄的立绘做推荐，别让上半屏空着
-      text(g, '本期突破英雄 · 点一位设为本命', C.W / 2, 326, 14, '#ffd23f', { font: 'sans-serif' });
-      ACT.heroes.forEach((n, i) => {
-        const x = 68 + i * 202, y = 344, w = 182, h = 150;
-        buttons.push({ x, y, w, h, fn: () => (setMain(n), (mainFxAt = performance.now()), sfx('tap')) });
-        if (!JQ.portraitDraw(g, n, x, y, w, h, { round: 10 })) {
-          panel(x, y, w, h, 'rgba(30,20,12,0.8)', 'rgba(230,194,122,0.5)', 1.5);
-          text(g, HEROES[n].chars[0], x + w / 2, y + h / 2 - 22, 52, '#f5ead0');
-          text(g, HEROES[n].chars[1], x + w / 2, y + h / 2 + 34, 52, '#f5ead0');
-        }
-        g.save();
-        JQ.rr(g, x, y, w, h, 10);
-        g.clip();
-        const grd = g.createLinearGradient(0, y + h * 0.55, 0, y + h);
-        grd.addColorStop(0, 'rgba(18,12,8,0)');
-        grd.addColorStop(1, 'rgba(18,12,8,0.9)');
-        g.fillStyle = grd;
-        g.fillRect(x, y + h * 0.5, w, h * 0.5);
-        g.restore();
-        text(g, n, x + 12, y + h - 20, 20, '#ffe9a0', { align: 'left', stroke: '#1a1008', strokeW: 3 });
+      card(24, cy, 672, chH, { r: 16 });
+      text(g, '挑一位本命将', C.W / 2, cy + 60, 34, '#ffe9a0', { stroke: '#1a0c04', strokeW: 5 });
+      [['atk', '每级 +3%'], ['hp', '出战生效'], ['summon', '易刷到字']].forEach(([id, l], i) => {
+        const x = 70 + i * 205;
+        JQ.statIcon(g, id, x + 50, cy + 120, 86);
+        text(g, l, x + 93, cy + 246, 21, '#f0e0c0');
       });
+      text(g, '在下面点一位英雄', C.W / 2, cy + 320, 18, '#c8b090', { font: 'sans-serif', bold: false });
     } else {
       const h = HEROES[name], lv = heroLvOf(name), cap = heroCap(name);
-      // 大卡面
-      const fxk = Math.min(1, (now - mainFxAt) / 700);
-      const sc = fxk < 1 ? 1 + 0.08 * Math.sin(fxk * Math.PI) : 1;
+      card(24, cy, 672, chH, { r: 16 });
+      const fxk = Math.min(1, (now - mainFxAt) / 700), sc = fxk < 1 ? 1 + 0.06 * Math.sin(fxk * Math.PI) : 1;
+      const pw = 250, ph = chH - 30, px = 40, py = cy + 15;
       g.save();
-      g.translate(140, 270);
+      g.translate(px + pw / 2, py + ph / 2);
       g.scale(sc, sc);
-      if (JQ.portraitDraw(g, name, -100, -110, 200, 220, { round: 22 })) {
-        g.save();
-        JQ.rr(g, -100, -110, 200, 220, 22);
-        g.strokeStyle = brkOf(name) ? 'rgba(255,207,90,0.9)' : 'rgba(230,194,122,0.55)';
-        g.lineWidth = brkOf(name) ? 3 : 2;
-        g.stroke();
-        g.restore();
-      } else {
-        if (!JQ.ui9(g, 'card', -100, -110, 200, 220, 34, 28)) panel(-100, -110, 200, 220, '#f3ead3', '#6a4a20', 3);
-        JQ.drawOrnament(g, name, 0, 0, 86, { tier: brkOf(name), behind: true, preview: brkOf(name) <= 0 });
-        text(g, h.chars[0], 0, -42, 76, '#2a1a08');
-        text(g, h.chars[1], 0, 46, 76, '#2a1a08');
-        JQ.drawOrnament(g, name, 0, 0, 86, { tier: brkOf(name), behind: false, preview: brkOf(name) <= 0 });
+      g.translate(-(px + pw / 2), -(py + ph / 2));
+      if (!JQ.portraitDraw(g, name, px, py, pw, ph, { round: 12 })) {
+        paperTile(name, px, py, pw, ph, { vertical: true, r: 12 });
+        if (ACT.byHero[name]) (JQ.drawOrnament(g, name, px + pw / 2, py + ph / 2, 90, { tier: brkOf(name), behind: false, preview: brkOf(name) <= 0 }));
       }
       g.restore();
-      if (fxk < 1) {
-        JQ.fxSprite(g, 'sparkle', 140, 250, 260, 346, (1 - fxk) * 1.3, fxk * 2);
-        g.save();
-        g.globalAlpha = 1 - fxk;
-        text(g, '+3%', 140, 140 - fxk * 40, 30, '#ffd23f', { stroke: '#3a2008', strokeW: 5 });
-        g.restore();
-      }
-      text(g, name, 270, 172, 38, '#ffe9a0', { align: 'left', stroke: '#2a1a08', strokeW: 5 });
-      text(g, `${JQ.PACKS[h.pack] ? JQ.PACKS[h.pack].name : ''} · ${h.role}`, 272, 210, 15, '#bfa878', { align: 'left', font: 'sans-serif', bold: false });
-      text(g, `Lv ${lv}`, 270, 252, 30, '#fff3d6', { align: 'left', stroke: '#2a1a08', strokeW: 4 });
-      text(g, `/ ${cap}`, 360, 256, 16, '#bfa878', { align: 'left', font: 'sans-serif', bold: false });
-      const blv = brkOf(name);
-      if (ACT.byHero[name]) text(g, `突破 ${blv}/3` + (blv < 3 ? ` · 下次上限 +10` : ' · 已满突'), 660, 256, 13, blv ? '#ffcf5a' : '#9a8f7a', { align: 'right', font: 'sans-serif' });
-      g.save();
-      JQ.rr(g, 270, 274, 400, 10, 5);
-      g.fillStyle = 'rgba(255,255,255,0.12)';
+      if (fxk < 1) JQ.fxSprite(g, 'sparkle', px + pw / 2, py + ph / 2, 300, 380, (1 - fxk) * 1.3, fxk * 2);
+      const rx = px + pw + 30;
+      text(g, name, rx, cy + 52, 44, '#ffe9a0', { align: 'left', stroke: '#1a0c04', strokeW: 5 });
+      JQ.roleIconDraw(g, h.role, rx, cy + 80, 36);
+      text(g, h.role, rx + 44, cy + 99, 20, '#e6c88a', { align: 'left' });
+      // 等级：大号数字 + 进度条
+      text(g, `Lv ${lv}`, rx, cy + 162, 46, '#fff3d6', { align: 'left', stroke: '#1a0c04', strokeW: 5 });
+      text(g, `/ ${cap}`, rx + 130, cy + 168, 22, '#c8b090', { align: 'left' });
+      JQ.rr(g, rx, cy + 188, 360, 14, 7);
+      g.fillStyle = 'rgba(0,0,0,0.45)';
       g.fill();
-      JQ.rr(g, 270, 274, Math.max(6, (400 * lv) / cap), 10, 5);
+      JQ.rr(g, rx, cy + 188, Math.max(14, (360 * lv) / cap), 14, 7);
       g.fillStyle = '#e6b04a';
       g.fill();
-      g.restore();
-      const cur = Math.round(mainBonus(lv) * 100), nxt = Math.round(mainBonus(lv + 1) * 100);
-      text(g, `攻击 / 血量  +${cur}%` + (lv < cap ? `  →  +${nxt}%` : ''), 270, 312, 18, '#f0e4c8', { align: 'left', font: 'sans-serif' });
-      text(g, '加成只在出战时对本命将生效', 270, 338, 13, '#9a8f7a', { align: 'left', font: 'sans-serif', bold: false });
-      const full = lv >= cap, cost = upCost(lv), can = !full && prog.coins >= cost;
-      const canBrk = full && !!ACT.byHero[name] && brkOf(name) < 3;
-      button(270, 360, 400, 70, full ? (canBrk ? '已达上限 · 去突破' : ACT.byHero[name] ? '已满突 · Lv50' : '已达上限') : `升 级   铜钱 ${cost}`, () => {
-        if (full) {
-          if (canBrk) (actHero = name), openActivity('brk');
-          else sfx('bad');
-          return;
-        }
+      // 加成：攻击/生命两个图标 + 大数字
+      const cur = Math.round(mainBonus(lv) * 100);
+      [['atk', cur], ['hp', cur]].forEach(([id, v], i) => {
+        JQ.statIcon(g, id, rx + i * 180, cy + 220, 48);
+        text(g, `+${v}%`, rx + 56 + i * 180, cy + 246, 30, '#ffd23f', { align: 'left', stroke: '#1a0c04', strokeW: 4 });
+      });
+      const full = lv >= cap, cost = upCost(lv), can = !full && prog.coins >= cost, canBrk = full && !!ACT.byHero[name] && brkOf(name) < 3;
+      button(rx, cy + 290, 370, 72, full ? (canBrk ? '去突破 · 上限 +10' : '已达上限') : `升级  ${cost} 铜钱`, () => {
+        if (full) return canBrk ? ((actHero = name), openActivity('brk')) : sfx('bad');
         if (upgradeMain()) (mainFxAt = performance.now()), sfx('merge'), buzz(18);
         else sfx('bad');
-      }, { on: can || canBrk, disabled: full && !canBrk, size: full ? 20 : 26 });
-      if (!full && !can) text(g, `还差 ${cost - prog.coins} 铜钱 · 每局都能拿`, 470, 448, 13, '#e8a060', { font: 'sans-serif', bold: false });
-      const bdef = JQ.heroAtBrk(name, blv);
-      text(g, `被动【${passiveTitle(bdef)}】${bdef.passive.desc}`, 50, 476, 12, '#d9c79a', { align: 'left', font: 'sans-serif', bold: false });
-      text(g, `大招【${bdef.ult.name}】${bdef.ult.desc}`, 50, 500, 12, '#e8a060', { align: 'left', font: 'sans-serif', bold: false });
+      }, { on: can || canBrk, disabled: full && !canBrk, size: 26 });
+      if (!full && !can) redDotless(rx + 185, cy + 376, `还差 ${cost - prog.coins} 铜钱`);
     }
-    // 选将：卡包页签 + 英雄格子
-    text(g, '点选更换本命将（每位的等级都会保留）', C.W / 2, 540, 15, '#ffd23f', { font: 'sans-serif' });
+    // 选将：卡包标签 + 字牌网格
+    const ty = cy + chH + 22;
     const tabs = ['sanguo', 'xiyou', 'tang', 'song', 'custom'];
-    tabs.forEach((k, i) => button(40 + i * 130, 556, 120, 42, k === 'custom' ? '自定义' : JQ.PACKS[k].name, () => (mainTab = k), { on: mainTab === k, size: 18 }));
+    segmented(24, ty, 672, 50, tabs.map((k) => [k, k === 'custom' ? '自定义' : JQ.PACKS[k].name]), mainTab, (k) => (mainTab = k), 19);
     const list = (JQ.PACKS[mainTab] && JQ.PACKS[mainTab].heroes) || [];
+    const gy = ty + 64, rows = Math.max(1, Math.ceil(list.length / 4)), gap = 10;
+    const tw = (672 - gap * 3) / 4, th = Math.min(170, (B - gy - gap * (rows - 1)) / rows);
     list.forEach((n, i) => {
-      const x = 40 + (i % 4) * 162, y = 614 + Math.floor(i / 4) * 66, on = n === prog.main, k = pressK(x, y);
-      buttons.push({ x, y, w: 150, h: 56, fn: () => (setMain(n), (mainFxAt = performance.now()), sfx('tap')) });
+      const x = 24 + (i % 4) * (tw + gap), y = gy + Math.floor(i / 4) * (th + gap), on = n === prog.main, k = pressK(x, y);
+      buttons.push({ x, y, w: tw, h: th, fn: () => (setMain(n), (mainFxAt = performance.now()), sfx('tap')) });
       g.save();
-      g.translate(x + 75, y + 28);
+      g.translate(x + tw / 2, y + th / 2);
       g.scale(k, k);
-      g.translate(-(x + 75), -(y + 28));
-      JQ.rr(g, x, y, 150, 56, 8);
-      if (on) {
-        const grd = g.createLinearGradient(0, y, 0, y + 56);
-        grd.addColorStop(0, '#ffe08a');
-        grd.addColorStop(1, '#d08a26');
-        g.fillStyle = grd;
-      } else g.fillStyle = 'rgba(74,48,32,0.86)';
-      g.fill();
-      g.strokeStyle = on ? '#ffe9a0' : 'rgba(201,163,90,0.8)';
-      g.lineWidth = on ? 2 : 1.2;
-      g.stroke();
-      if (JQ.portraitOf(n)) JQ.portraitDraw(g, n, x + 7, y + 7, 42, 42, { round: 21 });
-      else {
-        g.save();
-        JQ.rr(g, x + 9, y + 15, 26, 26, 13);
-        g.fillStyle = on ? 'rgba(90,50,10,0.25)' : 'rgba(20,12,6,0.55)';
-        g.fill();
-        g.restore();
-        JQ.roleIconDraw(g, HEROES[n].role, x + 11, y + 17, 22);
-      }
-      text(g, n, x + 56, y + 33, 20, on ? '#3a2008' : '#f0e0c0', { align: 'left' });
+      g.translate(-(x + tw / 2), -(y + th / 2));
+      paperTile(n, x, y, tw, th, { on });
       const lv = heroLvOf(n);
-      if (lv > 1) text(g, 'Lv' + lv, x + 144, y + 13, 10, on ? '#5a3a10' : '#ffd23f', { align: 'right', font: 'sans-serif' });
-      if (ACT.byHero[n]) text(g, `突破 ${brkOf(n)}/3`, x + 144, y + 44, 9, on ? '#5a3a10' : brkOf(n) ? '#ffcf5a' : '#9a8f7a', { align: 'right', font: 'sans-serif' });
+      if (lv > 1) (JQ.rr(g, x + tw - 52, y + 6, 46, 24, 12), (g.fillStyle = '#a82818'), g.fill(), text(g, 'Lv' + lv, x + tw - 29, y + 18, 13, '#fff1d8', { font: 'sans-serif' }));
+      if (ACT.byHero[n]) drawMiniPips(x + 14, y + th - 14, brkOf(n));
       g.restore();
     });
-    text(g, '本命将要在出战卡包里才会上场；开局刷字时更容易刷到他的字', C.W / 2, 890, 13, '#9a8f7a', { font: 'sans-serif', bold: false });
-    button(210, 1150, 300, 64, '返 回', () => (screen = 'menu'), { size: 26 });
+  }
+  function redDotless(x, y, s2) {
+    text(g, s2, x, y, 15, '#e8a060', { font: 'sans-serif', bold: false });
   }
 
   // ---------- 突破活动页 ----------
@@ -2613,16 +3099,21 @@
     text(g, hero[0], x + s / 2, y + s / 2 + 1, s * 0.55, '#fff1d0', { stroke: '#5a0a04', strokeW: 2 });
   }
   function drawActResources() {
-    if (!JQ.iconDraw(g, 'stone', 32, 82, 28, 28)) actStoneIcon(34, 82, 26);
-    text(g, `${prog.act.stone}`, 68, 100, 20, '#ffe9a0', { align: 'left', stroke: '#2a1a08', strokeW: 3 });
-    text(g, '破阵石', 112, 100, 13, '#d8c8a0', { align: 'left', font: 'sans-serif', bold: false });
-    let x = 256;
-    for (const h of ACT.heroes) {
-      if (!JQ.iconDraw(g, 'seal', x, 81, 30, 30)) actSealIcon(h, x, 82, 26);
-      text(g, `${prog.act.seal[h] || 0}`, x + 33, 100, 17, '#ffe9a0', { align: 'left', font: 'sans-serif', stroke: '#2a1a08', strokeW: 3 });
-      text(g, `${h}·${ACT.byHero[h].seal.replace('令', '')}`, x + 33, 114, 9, '#c8b090', { align: 'left', font: 'sans-serif', bold: false });
-      x += 112;
-    }
+    const y = pageTop() + 96;
+    resPill(24, y, 160, (x, yy, s2) => JQ.iconDraw(g, 'stone', x, yy, s2, s2) || actStoneIcon(x + 4, yy + 4, s2 - 8), prog.act.stone, null);
+    ACT.heroes.forEach((h, i) => {
+      const x = 196 + i * 168;
+      resPill(x, y, 156, (xx, yy, s2) => actPortraitCircle(h, xx, yy, s2), prog.act.seal[h] || 0, null);
+      text(g, ACT.byHero[h].seal, x + 150, y + 21, 13, '#d8c8a0', { align: 'right', font: 'sans-serif', bold: false });
+    });
+  }
+  // 奖励：图标 + ×N（不写“破阵石×4 将印×3”这种长句）
+  function rewardIcons(x, y, stone, seal, hero, s2) {
+    s2 = s2 || 34;
+    let cx = x;
+    if (stone) (JQ.iconDraw(g, 'stone', cx, y, s2, s2) || actStoneIcon(cx, y, s2), text(g, '×' + stone, cx + s2 + 2, y + s2 / 2 + 1, s2 * 0.58, '#ffe9a0', { align: 'left', font: 'sans-serif', stroke: '#1a0c04', strokeW: 3 }), (cx += s2 + 50));
+    if (seal) (actPortraitCircle(hero, cx, y, s2), text(g, '×' + seal, cx + s2 + 2, y + s2 / 2 + 1, s2 * 0.58, '#ffe9a0', { align: 'left', font: 'sans-serif', stroke: '#1a0c04', strokeW: 3 }), (cx += s2 + 50));
+    return cx - x;
   }
   function actHeroCard(name, x, y, w, h, tier) {
     if (!JQ.ui9(g, 'card', x, y, w, h, 34, 20)) panel(x, y, w, h, '#f3ead3', '#6a4a20', 3);
@@ -2636,7 +3127,7 @@
   function actPortraitCard(hero, x, y, w, h, tier, opts) {
     opts = opts || {};
     const r = opts.round == null ? 12 : opts.round;
-    if (!JQ.portraitDraw(g, hero, x, y, w, h, { round: r })) {
+    if (!JQ.portraitDraw(g, hero, x, y, w, h, { round: r, preview: true })) {
       actHeroCard(hero, x, y, w, h, tier);
       return false;
     }
@@ -2679,7 +3170,7 @@
     return true;
   }
   function actPortraitCircle(hero, x, y, s) {
-    if (!JQ.portraitDraw(g, hero, x, y, s, s, { round: s / 2 })) {
+    if (!JQ.portraitDraw(g, hero, x, y, s, s, { round: s / 2, preview: true })) {
       actSealIcon(hero, x, y, s);
       return;
     }
@@ -2690,6 +3181,20 @@
     g.lineWidth = 1.5;
     g.stroke();
     g.restore();
+  }
+  function drawMiniPips(x, y, lv) {
+    for (let i = 0; i < 3; i++) {
+      const done = i < lv;
+      g.save();
+      g.translate(x + i * 12, y);
+      g.rotate(Math.PI / 4);
+      g.fillStyle = done ? '#ffcf5a' : 'rgba(20,12,8,0.7)';
+      g.fillRect(-4, -4, 8, 8);
+      g.strokeStyle = done ? '#fff0b0' : 'rgba(240,200,120,0.55)';
+      g.lineWidth = 1;
+      g.strokeRect(-4, -4, 8, 8);
+      g.restore();
+    }
   }
   function drawActPips(x, y, lv) {
     for (let i = 0; i < 3; i++) {
@@ -2706,122 +3211,159 @@
     }
   }
   function drawActBreak() {
-    const b = ACT.byHero[actHero], lv = brkOf(actHero);
+    const b = ACT.byHero[actHero], lv = brkOf(actHero), Y0 = pageTop() + 220, B = pageBottom();
+    // 三位英雄切换
     ACT.heroes.forEach((n, i) => {
-      const x = 40 + i * 214, y = 190, w = 202, h = 54, on = actHero === n, k = pressK(x, y);
-      buttons.push({ x, y, w, h, fn: () => (actHero = n) });
-      g.save();
-      g.translate(x + w / 2, y + h / 2);
-      g.scale(k, k);
-      g.translate(-(x + w / 2), -(y + h / 2));
-      JQ.rr(g, x, y, w, h, 10);
-      if (on) {
-        const grd = g.createLinearGradient(0, y, 0, y + h);
-        grd.addColorStop(0, '#ffe39a');
-        grd.addColorStop(1, '#d08a26');
-        g.fillStyle = grd;
-      } else g.fillStyle = 'rgba(28,18,10,0.8)';
-      g.fill();
-      g.strokeStyle = on ? '#ffe9a0' : 'rgba(220,170,100,0.55)';
-      g.lineWidth = on ? 2.2 : 1.4;
-      g.stroke();
-      actPortraitCircle(n, x + 6, y + 5, 44);
-      text(g, n, x + 58, y + 24, 19, on ? '#3a2008' : '#ffe9a0', { align: 'left' });
-      text(g, `突破 ${brkOf(n)}/3`, x + 58, y + 42, 11, on ? '#5a3a10' : '#c8b090', { align: 'left', font: 'sans-serif', bold: false });
-      g.restore();
+      const x = 24 + i * 228, y = Y0, w = 216, h = 64, on = actHero === n;
+      buttons.push({ x, y, w, h, fn: () => ((actHero = n), (brkSel = Math.min(2, brkOf(n)))) });
+      card(x, y, w, h, { on, r: 14 });
+      actPortraitCircle(n, x + 8, y + 7, 50);
+      text(g, n, x + 68, y + 26, 22, on ? '#3a2008' : '#ffe9a0', { align: 'left' });
+      drawMiniPips(x + 72, y + 48, brkOf(n));
     });
-    if (!actPortraitCard(actHero, 44, 250, 230, 292, lv, { label: `字饰 · ${b.ornName}` })) {
-      text(g, actHero, 159, 512, 24, '#ffe9a0', { stroke: '#2a1a08', strokeW: 4 });
-      drawActPips(120, 534, lv);
+    // 立绘大卡 + 右侧：等级上限 / 属性 两个大数字 + 材料 + 突破按钮
+    const cy = Y0 + 80, ch = Math.min(380, Math.max(300, (B - cy) * 0.42)), pw = Math.round(ch * 0.75);
+    actPortraitCard(actHero, 24, cy, pw, ch, lv, { label: `字饰 · ${b.ornName}` });
+    if (lv === 0) {
+      JQ.rr(g, 24, cy + ch - 92, pw, 34, 0);
+      g.fillStyle = 'rgba(168,40,24,0.9)';
+      g.fill();
+      text(g, '一突解锁立绘', 24 + pw / 2, cy + ch - 74, 16, '#fff1d8');
     }
-
-    const def = JQ.heroAtBrk(actHero, lv), base = HEROES[actHero];
-    const statPct = Math.round((def.atk / base.atk - 1) * 100);
-    panel(292, 250, 384, 328, 'rgba(255,230,170,0.06)', 'rgba(255,220,150,0.3)');
-    text(g, `突破  ${lv} / 3`, 312, 284, 24, '#ffe9a0', { align: 'left' });
-    text(g, `等级上限 Lv${20 + 10 * lv}` + (lv < 3 ? `  →  Lv${30 + 10 * lv}` : '  ·  已满'), 312, 316, 15, '#d8c8a0', { align: 'left', font: 'sans-serif' });
-    text(g, `突破属性  攻击 / 血量 +${statPct}%`, 312, 342, 14, '#ffcf5a', { align: 'left', font: 'sans-serif' });
+    const rx = 24 + pw + 20, rw = 696 - rx, def = JQ.heroAtBrk(actHero, lv), base = HEROES[actHero];
+    card(rx, cy, rw, ch, { r: 16 });
+    text(g, `突破 ${lv}/3`, rx + 20, cy + 40, 30, '#ffe9a0', { align: 'left', stroke: '#1a0c04', strokeW: 4 });
+    drawActPips(rx + rw - 100, cy + 38, lv);
+    [['cd', `Lv${20 + 10 * lv}`, '上限'], ['atk', `+${Math.round((def.atk / base.atk - 1) * 100)}%`, '攻/血']].forEach(([id, v, l], i) => {
+      const x = rx + 20 + i * (rw / 2 - 10);
+      JQ.statIcon(g, id, x, cy + 70, 46);
+      text(g, v, x + 54, cy + 90, 26, '#ffd23f', { align: 'left', stroke: '#1a0c04', strokeW: 4 });
+      text(g, l, x + 54, cy + 114, 14, '#c8b090', { align: 'left', font: 'sans-serif', bold: false });
+    });
     if (lv < 3) {
       const L = b.levels[lv], cost = JQ.brkCost(actHero, lv);
-      text(g, `下一突 · ${L.title}`, 312, 378, 18, '#fff3d6', { align: 'left' });
-      wrapLines(L.summary.replace(/。$/, ''), 23).slice(0, 2).forEach((line, i) => text(g, line, 312, 404 + i * 20, 13, '#d8c8a0', { align: 'left', font: 'sans-serif', bold: false }));
-      text(g, `消耗：破阵石 ${cost.stone} · ${b.seal} ${cost.seal}`, 312, 456, 14, '#ffd23f', { align: 'left', font: 'sans-serif' });
-      const can = (prog.act.stone || 0) >= cost.stone && (prog.act.seal[actHero] || 0) >= cost.seal;
-      button(312, 474, 344, 54, can ? '突 破' : `材料不足`, () => doBreakthrough(actHero), { on: can, disabled: !can, size: 26 });
+      text(g, L.title, rx + 20, cy + 162, 24, '#fff3d6', { align: 'left' });
+      const okS = (prog.act.stone || 0) >= cost.stone, okL = (prog.act.seal[actHero] || 0) >= cost.seal;
+      JQ.iconDraw(g, 'stone', rx + 20, cy + 186, 40, 40) || actStoneIcon(rx + 20, cy + 186, 40);
+      text(g, `${prog.act.stone || 0}/${cost.stone}`, rx + 66, cy + 207, 19, okS ? '#ffe9a0' : '#ff8a6a', { align: 'left', font: 'sans-serif' });
+      actPortraitCircle(actHero, rx + rw / 2, cy + 186, 40);
+      text(g, `${prog.act.seal[actHero] || 0}/${cost.seal}`, rx + rw / 2 + 46, cy + 207, 19, okL ? '#ffe9a0' : '#ff8a6a', { align: 'left', font: 'sans-serif' });
+      const can = okS && okL;
+      button(rx + 16, cy + ch - 84, rw - 32, 70, can ? '突 破' : '去活动关拿材料 ›', () => (can ? doBreakthrough(actHero) : (actTab = 'stage')), { on: can, size: can ? 30 : 20 });
     } else {
-      const last = b.levels[2];
-      text(g, '三突圆满 · 专属被动已激活', 312, 382, 18, '#fff3d6', { align: 'left' });
-      wrapLines(last.summary, 21).slice(0, 3).forEach((line, i) => text(g, line, 312, 410 + i * 20, 13, '#d8c8a0', { align: 'left', font: 'sans-serif', bold: false }));
-      button(312, 486, 344, 54, '已 满 突', () => sfx('bad'), { disabled: true, size: 24 });
+      text(g, '三突圆满', rx + 20, cy + 170, 28, '#ffd23f', { align: 'left' });
+      button(rx + 16, cy + ch - 84, rw - 32, 70, '已 满 突', () => sfx('bad'), { disabled: true, size: 26 });
     }
-    // 突破路线
-    text(g, '突破路线', 44, 608, 18, '#ffd23f', { align: 'left' });
-    g.fillStyle = 'rgba(255,220,150,0.18)';
-    g.fillRect(44, 620, 632, 1.5);
-    for (let i = 0; i < 3; i++) {
-      const L = b.levels[i], y = 636 + i * 104, done = i < lv, next = i === lv;
-      panel(40, y, 640, 92, done ? 'rgba(120,80,20,0.24)' : 'rgba(255,255,255,0.035)', next ? '#e8b05a' : 'rgba(200,170,120,0.22)', next ? 2 : 1);
+    // 突破路线：三颗大节点 + 选中节点的效果卡（图标标签 + 一句话）
+    const ry = cy + ch + 30, avail = B - ry, R = Math.min(70, avail * 0.16), ys = ry + R + 6, xs = [140, 360, 580];
+    for (let i = 0; i < 2; i++) {
       g.save();
-      g.fillStyle = done ? '#8a5a18' : next ? '#5a4020' : 'rgba(30,24,16,0.8)';
+      g.strokeStyle = i < lv ? 'rgba(255,207,90,0.95)' : 'rgba(180,150,100,0.35)';
+      g.lineWidth = i < lv ? 6 : 3;
       g.beginPath();
-      g.arc(76, y + 46, 21, 0, Math.PI * 2);
-      g.fill();
-      g.strokeStyle = done || next ? '#ffcf5a' : 'rgba(180,150,100,0.4)';
-      g.lineWidth = 1.8;
+      g.moveTo(xs[i] + R, ys);
+      g.lineTo(xs[i + 1] - R, ys);
       g.stroke();
-      text(g, ['一', '二', '三'][i], 76, y + 48, 22, done || next ? '#ffe9a0' : '#8a8070');
       g.restore();
-      text(g, `${['一突', '二突', '三突'][i]} · ${L.title}`, 110, y + 28, 18, done || next ? '#fff3d6' : '#a89c88', { align: 'left' });
-      wrapLines(L.summary.replace(/。$/, ''), 34).slice(0, 2).forEach((line, j) => text(g, line, 110, y + 54 + j * 19, 12.5, done || next ? '#d8c8a0' : '#8a8070', { align: 'left', font: 'sans-serif', bold: false }));
-      const status = done ? '已突破' : next ? '下一突' : '未解锁';
-      text(g, status, 656, y + 30, 14, done ? '#ffcf5a' : next ? '#ffe9a0' : '#7a7060', { align: 'right', font: 'sans-serif' });
     }
-    text(g, '材料：活动关卡首通 / 重复通关、活动任务；每次突破等级上限 +10', C.W / 2, 968, 12, '#9a8f7a', { font: 'sans-serif', bold: false });
+    for (let i = 0; i < 3; i++) {
+      const L = b.levels[i], x = xs[i], done = i < lv, next = i === lv, sel = i === brkSel;
+      buttons.push({ x: x - R, y: ys - R, w: 2 * R, h: 2 * R + 40, fn: () => (brkSel = i) });
+      g.save();
+      if (sel) (g.shadowColor = '#ffcf5a'), (g.shadowBlur = 18);
+      g.beginPath();
+      g.arc(x, ys, R, 0, Math.PI * 2);
+      g.fillStyle = done ? '#7a4a14' : next ? '#4a2c14' : 'rgba(20,14,9,0.92)';
+      g.fill();
+      g.shadowBlur = 0;
+      g.strokeStyle = sel ? '#fff0b0' : done || next ? '#ffcf5a' : 'rgba(180,150,100,0.4)';
+      g.lineWidth = sel ? 4 : 2;
+      g.stroke();
+      g.restore();
+      JQ.assetDraw(g, BRK_ART[actHero][i], x - R * 0.82, ys - R * 0.82, R * 1.64, R * 1.64, done || next ? 1 : 0.35);
+      text(g, ['一突', '二突', '三突'][i], x, ys + R + 22, 20, done || next ? '#ffe9a0' : '#8a8070');
+    }
+    const sl = b.levels[brkSel], dy = ys + R + 46;
+    if (dy + 90 < B) {
+      const dh = B - dy;
+      card(24, dy, 672, dh, { r: 16, light: brkSel === lv });
+      // 左：这一突的技能图大图；右：名字 + 效果图标 + 一句话
+      const as = Math.min(dh - 28, 200);
+      JQ.rr(g, 38, dy + 14, as, as, 14);
+      g.fillStyle = 'rgba(0,0,0,0.4)';
+      g.fill();
+      JQ.assetDraw(g, BRK_ART[actHero][brkSel], 38, dy + 14, as, as);
+      const tags = sl.ult ? JQ.effectTags(sl.ult) : sl.skillAdd ? JQ.effectTags({ do: sl.skillAdd }) : sl.exclusive ? JQ.passiveTags(sl.exclusive.add) : [];
+      const tx0 = 38 + as + 20;
+      text(g, `${['一突', '二突', '三突'][brkSel]} · ${sl.title}`, tx0, dy + 40, 24, '#ffd23f', { align: 'left', stroke: '#1a0c04', strokeW: 4 });
+      let tx = tx0;
+      tags.slice(0, 3).forEach((t) => (tx += tagChip(t, tx, dy + 62) + 8));
+      wrapLines(sl.summary.replace(/。$/, ''), 15).slice(0, Math.max(1, Math.floor((dh - 130) / 28))).forEach((line, k) => text(g, line, tx0, dy + 136 + k * 28, 19, '#f0e4c8', { align: 'left', font: 'sans-serif', bold: false }));
+    }
   }
   function drawActStages() {
+    const T = pageTop() + 220, B = pageBottom(), n = ACT.stages.length, gap = 14, h = (B - T - gap * (n - 1)) / n;
     ACT.stages.forEach((st, i) => {
-      const y = 202 + i * 208, cleared = !!prog.act.cleared[st.id], lv = brkOf(st.hero);
-      panel(40, y, 640, 190, 'rgba(255,255,255,0.04)', cleared ? 'rgba(230,180,90,0.55)' : 'rgba(200,170,120,0.28)', 1.5);
-      actPortraitCard(st.hero, 54, y + 14, 122, 162, lv, { round: 8 });
-      text(g, `${st.name} · ${st.hero}`, 196, y + 38, 24, '#ffe9a0', { align: 'left', stroke: '#2a1a08', strokeW: 4 });
-      text(g, cleared ? '已首通 · 可重复挑战' : '首通未拿', 196, y + 62, 13, cleared ? '#8fe08f' : '#ffb080', { align: 'left', font: 'sans-serif' });
-      text(g, `突破 ${lv}/3`, 650, y + 38, 11, lv ? '#ffcf5a' : '#9a8f7a', { align: 'right', font: 'sans-serif' });
-      wrapLines(st.desc.replace(/。$/, ''), 32).slice(0, 2).forEach((line, j) => text(g, line, 196, y + 88 + j * 19, 12.5, '#d8c8a0', { align: 'left', font: 'sans-serif', bold: false }));
-      text(g, `首通：破阵石×${st.first.stone}  ${ACT.byHero[st.hero].seal}×${st.first.seal}`, 196, y + 136, 13, '#ffd23f', { align: 'left', font: 'sans-serif' });
-      text(g, `重复：破阵石×${st.repeat.stone}  ${ACT.byHero[st.hero].seal}×${st.repeat.seal}  ·  敌强 ×${st.boost.toFixed(2)}`, 196, y + 158, 12, '#c8b090', { align: 'left', font: 'sans-serif', bold: false });
-      button(500, y + 116, 150, 56, cleared ? '再 战' : '挑 战', () => startActivityStage(st.id), { on: true, size: 24 });
+      const y = T + i * (h + gap), cleared = !!prog.act.cleared[st.id], lv = brkOf(st.hero);
+      card(24, y, 672, h, { r: 16 });
+      // 背景：敌方卡包封面（压暗），一眼看出打谁
+      const im = PACK_ART[st.enemyPack];
+      if (im && im.complete && im.naturalWidth) {
+        g.save();
+        JQ.rr(g, 26, y + 2, 668, h - 4, 15);
+        g.clip();
+        const ir = im.naturalWidth / im.naturalHeight, bw = 668, bh = h - 4, sh = im.naturalWidth / (bw / bh);
+        g.globalAlpha = 0.45;
+        g.drawImage(im, 0, Math.max(0, (im.naturalHeight - sh) * 0.45), im.naturalWidth, Math.min(sh, im.naturalHeight), 26, y + 2, bw, bh);
+        g.globalAlpha = 1;
+        const gr = g.createLinearGradient(26, 0, 694, 0);
+        gr.addColorStop(0, 'rgba(30,18,8,0.85)');
+        gr.addColorStop(0.6, 'rgba(30,18,8,0.55)');
+        gr.addColorStop(1, 'rgba(30,18,8,0.2)');
+        g.fillStyle = gr;
+        g.fillRect(26, y + 2, 668, h - 4);
+        g.restore();
+      }
+      const pw = Math.min(200, (h - 24) * 0.75);
+      actPortraitCard(st.hero, 36, y + 12, pw, h - 24, lv, { round: 10 });
+      const x = 36 + pw + 22;
+      text(g, st.name, x, y + 44, 34, '#ffe9a0', { align: 'left', stroke: '#1a0c04', strokeW: 5 });
+      JQ.rr(g, x, y + 66, cleared ? 132 : 112, 30, 15);
+      g.fillStyle = cleared ? '#5a3a14' : '#a82818';
+      g.fill();
+      text(g, cleared ? '已首通 · 可重复' : '首通奖励', x + (cleared ? 66 : 56), y + 82, 14, '#fff1d8', { font: 'sans-serif' });
+      text(g, `敌强 ×${st.boost.toFixed(2)}`, 684, y + 34, 16, '#e8a060', { align: 'right', font: 'sans-serif' });
+      const r = cleared ? st.repeat : st.first;
+      rewardIcons(x, y + 112, r.stone, r.seal, st.hero, 40);
+      button(684 - 180, y + h - 84, 180, 70, cleared ? '再 战' : '挑 战', () => startActivityStage(st.id), { on: true, size: 28 });
     });
-    panel(40, 840, 640, 190, 'rgba(255,230,170,0.06)', 'rgba(255,220,150,0.25)');
-    text(g, '活动规则', 64, 874, 18, '#ffd23f', { align: 'left' });
-    [
-      '· 进入活动关固定使用对应卡包，开局送 3 级本期英雄（大招已解锁）。',
-      '· 活动关每天可反复挑战；首通奖励只有一次，重复通关继续给材料。',
-      '· 活动任务按“大招释放次数 / 英雄击杀数”累计，完成即可领取。',
-      '· 本期三位英雄的材料互不通用；突破后只影响你自己的英雄。',
-    ].forEach((s, i) => text(g, s, 64, 906 + i * 26, 13, '#d8c8a0', { align: 'left', font: 'sans-serif', bold: false }));
   }
   function drawActTasks() {
+    const T = pageTop() + 220, B = pageBottom(), n = ACT.tasks.length, gap = 10, h = (B - T - gap * (n - 1)) / n;
     ACT.tasks.forEach((t, i) => {
-      const y = 202 + i * 136, p = actTaskProgress(t), done = !!prog.act.tasks[t.id], can = !done && p >= t.need;
-      panel(40, y, 640, 124, done ? 'rgba(80,110,60,0.18)' : 'rgba(255,255,255,0.04)', done ? 'rgba(140,190,110,0.45)' : can ? 'rgba(230,180,90,0.55)' : 'rgba(200,170,120,0.22)', 1.4);
-      actPortraitCircle(t.hero, 56, y + 14, 44);
-      text(g, t.name, 112, y + 30, 18, done ? '#a8d890' : '#fff3d6', { align: 'left' });
-      text(g, t.desc, 112, y + 54, 12.5, '#c8b090', { align: 'left', font: 'sans-serif', bold: false });
-      g.save();
-      JQ.rr(g, 112, y + 76, 280, 10, 5);
-      g.fillStyle = 'rgba(255,255,255,0.1)';
+      const y = T + i * (h + gap), p = actTaskProgress(t), done = !!prog.act.tasks[t.id], can = !done && p >= t.need;
+      card(24, y, 672, h, { r: 14, light: can, dim: done });
+      const s2 = Math.min(80, h - 24);
+      actPortraitCircle(t.hero, 40, y + (h - s2) / 2, s2);
+      JQ.statIcon(g, t.kind === 'ult' ? 'buff' : 'atk', 40 + s2 - 30, y + (h - s2) / 2 + s2 - 30, 34);
+      const x = 40 + s2 + 20;
+      text(g, t.name, x, y + h * 0.3, 24, done ? '#9a8f7a' : '#ffe9a0', { align: 'left' });
+      // 进度条 + 数字
+      const bw = 250, by = y + h * 0.62;
+      JQ.rr(g, x, by - 8, bw, 16, 8);
+      g.fillStyle = 'rgba(0,0,0,0.45)';
       g.fill();
-      JQ.rr(g, 112, y + 76, Math.max(4, (280 * p) / t.need), 10, 5);
-      g.fillStyle = done ? '#7fc060' : '#e6b04a';
+      JQ.rr(g, x, by - 8, Math.max(16, (bw * p) / t.need), 16, 8);
+      g.fillStyle = done ? '#8a7a5a' : '#e6b04a';
       g.fill();
-      g.restore();
-      text(g, `${p} / ${t.need}`, 400, y + 85, 13, '#ffd23f', { align: 'left', font: 'sans-serif' });
-      text(g, `破阵石×${t.reward.stone}  ${ACT.byHero[t.hero].seal}×${t.reward.seal}`, 452, y + 30, 13, '#ffcf5a', { align: 'left', font: 'sans-serif' });
-      text(g, done ? '本期已完成' : can ? '可以领取' : '继续挑战活动关', 452, y + 54, 11, done ? '#8fc070' : can ? '#ffe9a0' : '#8a8070', { align: 'left', font: 'sans-serif', bold: false });
-      button(540, y + 70, 112, 42, done ? '已领取' : can ? '领 取' : '未完成', () => {
+      text(g, `${p}/${t.need}`, x + bw + 12, by + 1, 18, '#ffe9a0', { align: 'left', font: 'sans-serif' });
+      const rx = 470;
+      rewardIcons(rx, y + 14, t.reward.stone, t.reward.seal, t.hero, 30);
+      button(560, y + h - 58, 124, 48, done ? '已领' : can ? '领 取' : '未完成', () => {
         if (claimActTask(t.id)) (sfx('coin'), buzz(15));
         else sfx('bad');
-      }, { on: can, disabled: !can, size: 17 });
+      }, { on: can, disabled: !can, size: 19 });
+      if (can) redDot(684, y + h - 56);
     });
   }
   function drawBrkAnim(now) {
@@ -2893,21 +3435,530 @@
     }
     if (k >= 1) brkAnim = null;
   }
+  function drawActHelp() {
+    buttons.push({ x: -padX, y: -padY, w: C.W + 2 * padX, h: C.H + 2 * padY, fn: () => (actHelp = false) });
+    veil(0.66);
+    popFrame(80, 190, 560, 650, '活动规则');
+    buttons.push({ x: 80, y: 190, w: 560, h: 650, fn: () => {} });
+    iconBtn(598, 170, 48, '×', () => (actHelp = false));
+    JQ.iconDraw(g, 'stone', 116, 286, 34, 34);
+    text(g, '破阵石', 158, 310, 17, '#ffe9a0', { align: 'left' });
+    JQ.iconDraw(g, 'seal', 270, 286, 34, 34);
+    text(g, '将印（按英雄）', 312, 310, 17, '#ffe9a0', { align: 'left' });
+    const lines = [
+      '活动关首通：3 将印 + 4 破阵石；重复通关：1 将印 + 2 破阵石。',
+      '六条活动任务共 9 将印 + 24 破阵石，首通 + 任务刚好够三位全三突。',
+      '每次突破：等级上限 +10，攻击/血量 +5%（第三突 +6%）。',
+      '一突技能加效果，二突大招进化，三突解锁专属被动。',
+      '三关从第一天就全开，可反复挑战；突破只影响你自己的英雄。',
+    ];
+    let y = 360;
+    lines.forEach((s) => {
+      wrapLines(s, 24).forEach((l) => {
+        text(g, l, 116, y, 14, '#e8dcc0', { align: 'left', font: 'sans-serif', bold: false });
+        y += 24;
+      });
+      y += 10;
+    });
+    text(g, '本期：虎牢关 · 花果山 · 朱仙镇', C.W / 2, 760, 14, '#ffcf5a', { font: 'sans-serif' });
+  }
   function drawActivity() {
-    if (menuGame) JQ.render(menuGame, menuView);
-    pageFrame('突破活动 · 第一期');
+    JQ.drawBackdrop(g);
+    pageFrame('突破活动 · 第一期', 0.78, () => ((activityStage = null), (screen = 'menu')));
     drawActResources();
-    button(50, 132, 196, 44, '突 破', () => (actTab = 'brk'), { on: actTab === 'brk', flat: actTab !== 'brk', size: 20 });
-    button(262, 132, 196, 44, '活动关卡', () => (actTab = 'stage'), { on: actTab === 'stage', flat: actTab !== 'stage', size: 20 });
-    button(474, 132, 196, 44, '活动任务', () => (actTab = 'task'), { on: actTab === 'task', flat: actTab !== 'task', size: 20 });
-    JQ.iconDraw(g, 'breakthrough', 58, 139, 30, 30);
-    JQ.iconDraw(g, 'stage', 270, 139, 30, 30);
-    JQ.iconDraw(g, 'task', 482, 139, 30, 30);
+    segmented(24, pageTop() + 152, 600, 52, [['brk', '突 破'], ['stage', '活动关卡'], ['task', '活动任务']], actTab, (k) => (actTab = k), 20);
+    iconBtn(640, pageTop() + 150, 56, '?', () => (actHelp = !actHelp));
     if (actTab === 'brk') drawActBreak();
     else if (actTab === 'stage') drawActStages();
     else drawActTasks();
-    button(210, 1150, 300, 64, '返 回', () => ((activityStage = null), (screen = 'menu')), { size: 26 });
+    if (actHelp) drawActHelp();
     if (brkAnim) drawBrkAnim(performance.now());
+  }
+
+  // ---------- 求贤页 ----------
+  // 抽卡演出视频（muse 生成：卷轴展开 → 金光 → 落印）；没加载好时退回代码画的卷轴
+  let qxVideo = null, qxVideoOk = false, qxToast = null;
+  function qxVideoEl() {
+    if (qxVideo || typeof document === 'undefined') return qxVideo;
+    const v = document.createElement('video');
+    v.muted = true;
+    v.playsInline = true;
+    v.setAttribute('playsinline', '');
+    v.setAttribute('webkit-playsinline', '');
+    v.preload = 'auto';
+    v.addEventListener('canplay', () => (qxVideoOk = true));
+    v.addEventListener('error', () => (qxVideoOk = false));
+    v.src = 'img/qx_reveal.mp4?v=20261111b';
+    qxVideo = v;
+    return v;
+  }
+  function playQxVideo() {
+    const v = qxVideoEl();
+    if (!v) return;
+    try {
+      v.currentTime = 0;
+      v.playbackRate = 1.3;
+      const p = v.play();
+      if (p && p.catch) p.catch(() => (qxVideoOk = false));
+    } catch (e) {
+      qxVideoOk = false;
+    }
+  }
+  function openQiuxian(tab) {
+    if (tab) qxTab = tab;
+    qxVideoEl();
+    JQ.preloadArt('qiuxian_bg');
+    JQ.preloadArt('ic_token');
+    for (const s of JQ.SKINS) JQ.preloadArt(s.art);
+    screen = 'qiuxian';
+  }
+  function qxSay(s) {
+    qxToast = { s, t0: performance.now() };
+  }
+  const qxIcon = (x, y, s) => {
+    if (JQ.iconDraw(g, 'token', x, y, s, s)) return;
+    JQ.rr(g, x + s * 0.18, y + s * 0.05, s * 0.64, s * 0.9, s * 0.12);
+    g.fillStyle = '#7a3a14';
+    g.fill();
+    g.strokeStyle = '#f0c878';
+    g.lineWidth = Math.max(1, s * 0.05);
+    g.stroke();
+    text(g, '贤', x + s / 2, y + s / 2 + 1, s * 0.46, '#ffe9a0');
+  };
+  const qxYayunIcon = (x, y, s) => {
+    g.save();
+    g.beginPath();
+    g.arc(x + s / 2, y + s / 2, s * 0.42, 0, Math.PI * 2);
+    g.fillStyle = '#2a1a10';
+    g.fill();
+    g.strokeStyle = '#e6c27a';
+    g.lineWidth = Math.max(1, s * 0.06);
+    g.stroke();
+    g.restore();
+    text(g, '韵', x + s / 2, y + s / 2 + 1, s * 0.5, '#ffd9a0');
+  };
+  // 皮肤立绘卡：立绘 + 底部压暗 + 名字；opts.dim 未拥有时压暗
+  function skinCard(sk, x, y, w, h, opts) {
+    opts = opts || {};
+    const r = opts.round == null ? 12 : opts.round;
+    if (!JQ.portraitDraw(g, sk.hero, x, y, w, h, { round: r, file: sk.art })) {
+      panel(x, y, w, h, 'rgba(40,24,14,0.9)', 'rgba(230,194,122,0.5)', 1.5);
+      text(g, HEROES[sk.hero].chars[0], x + w / 2, y + h * 0.36, w * 0.3, '#f5ead0');
+      text(g, HEROES[sk.hero].chars[1], x + w / 2, y + h * 0.62, w * 0.3, '#f5ead0');
+    }
+    g.save();
+    JQ.rr(g, x, y, w, h, r);
+    g.clip();
+    const grd = g.createLinearGradient(0, y + h * 0.5, 0, y + h);
+    grd.addColorStop(0, 'rgba(18,12,8,0)');
+    grd.addColorStop(0.6, 'rgba(18,12,8,0.75)');
+    grd.addColorStop(1, 'rgba(18,12,8,0.96)');
+    g.fillStyle = grd;
+    g.fillRect(x, y + h * 0.5, w, h * 0.5);
+    if (opts.dim) (g.fillStyle = 'rgba(12,8,5,0.55)'), g.fillRect(x, y, w, h);
+    g.restore();
+    g.save();
+    JQ.rr(g, x, y, w, h, r);
+    g.strokeStyle = opts.on ? '#ffe08a' : 'rgba(230,194,122,0.6)';
+    g.lineWidth = opts.on ? 3 : 1.5;
+    g.stroke();
+    g.restore();
+  }
+  function qxSwapLine(sk) {
+    const def = sk.swap === 'ult' ? sk.ult : sk.skill;
+    return `${sk.swap === 'ult' ? '大招' : '技能'}换成「${def.name}」`;
+  }
+  function drawQxTop() {
+    // 背景：招贤馆图铺满；没有图就用木面板
+    const top = -JQ.VIEW.top, bot = C.H + JQ.VIEW.bot;
+    if (JQ.assetCover(g, 'qiuxian_bg', -padX, top, C.W + 2 * padX, bot - top)) {
+      veil(0.28);
+      const grd = g.createLinearGradient(0, top, 0, 220);
+      grd.addColorStop(0, 'rgba(20,12,6,0.85)');
+      grd.addColorStop(1, 'rgba(20,12,6,0)');
+      g.fillStyle = grd;
+      g.fillRect(-padX, top, C.W + 2 * padX, 220 - top);
+      JQ.ui3(g, 'scroll', C.W / 2 - 170, pageTop() + 2, 340, 70, 70);
+      text(g, '求 贤', C.W / 2, pageTop() + 38, 32, '#3a2008');
+      backBtn(() => (screen = 'menu'));
+    } else pageFrame('求 贤', 0.78, () => (screen = 'menu'));
+    const T = pageTop() + 96;
+    resPill(24, T, 216, (x, y, s2) => qxIcon(x, y, s2), qx().tokens, null);
+    resPill(252, T, 200, qxYayunIcon, qx().yayun, null);
+    resPill(464, T, 232, (x, y, s2) => JQ.uiDraw(g, 'coin', x + 4, y + 4, s2 - 8, s2 - 8), prog.coins, null);
+    segmented(24, T + 54, 672, 52, [['draw', '求 贤'], ['skins', `皮肤 ${skinCount()}/${JQ.SKINS.length}`]], qxTab, (k) => (qxTab = k), 21);
+  }
+  function drawQxDraw() {
+    const now = performance.now(), n = JQ.SKINS.length, T = pageTop() + 96, B = pageBottom();
+    // 主展示：自动轮播当期皮肤，左右箭头手动切换
+    if (now - qxSwapAt > 4200) (qxSel = qxSwapAt ? (qxSel + 1) % n : qxSel), (qxSwapAt = now);
+    if (qxSkinPick != null) (qxSel = qxSkinPick), (qxSkinPick = null), (qxSwapAt = now);
+    const sk = JQ.SKINS[qxSel], fade = Math.min(1, (now - qxSwapAt) / 260);
+    // 自下而上排：规则行、按钮、保底条；剩下的高度全给立绘
+    const linkY = B - 50, btnY = B - 190, pityY = B - 268, cy = T + 124, ch = Math.min(900, pityY - 34 - cy), cw = Math.min(548, Math.round(ch * 0.75)), cx = C.W / 2, cxL = cx - cw / 2;
+    g.save();
+    g.globalAlpha = 0.35 + 0.65 * fade;
+    JQ.fxSprite(g, 'rays', cx, cy + ch * 0.42, cw * 1.8, cw * 1.8, 0.35, now / 9000);
+    skinCard(sk, cxL, cy, cw, ch, { round: 18, on: true });
+    g.restore();
+    if (skinOwned(sk.id)) {
+      JQ.rr(g, cxL + cw - 112, cy + 14, 98, 34, 17);
+      g.fillStyle = 'rgba(140,30,16,0.92)';
+      g.fill();
+      text(g, '已拥有', cxL + cw - 63, cy + 32, 17, '#fff1d0');
+    }
+    // 皮肤名 + 换掉的技能（图标 + 名字），不写长句
+    text(g, sk.name, cxL + 24, cy + ch - 92, 40, '#ffe9a0', { align: 'left', stroke: '#1a1008', strokeW: 6 });
+    text(g, sk.hero, cxL + 26, cy + ch - 50, 20, '#f0d8a8', { align: 'left' });
+    const sw = sk.swap === 'ult' ? sk.ult : sk.skill;
+    const tg = JQ.effectTags(sw)[0] || 'aoe';
+    JQ.statIcon(g, tg, cxL + 92, cy + ch - 74, 40);
+    text(g, `${sk.swap === 'ult' ? '大招' : '技能'}「${sw.name}」`, cxL + 138, cy + ch - 50, 19, '#ffb070', { align: 'left' });
+    iconBtn(cxL - 62, cy + ch / 2 - 28, 56, '‹', () => (qxSkinPick = (qxSel + n - 1) % n));
+    iconBtn(cxL + cw + 6, cy + ch / 2 - 28, 56, '›', () => (qxSkinPick = (qxSel + 1) % n));
+    for (let i = 0; i < n; i++) {
+      g.beginPath();
+      g.arc(cx - (n - 1) * 10 + i * 20, cy + ch + 16, i === qxSel ? 6 : 4, 0, Math.PI * 2);
+      g.fillStyle = i === qxSel ? '#ffd23f' : 'rgba(255,230,180,0.45)';
+      g.fill();
+    }
+    // 保底：大数字 + 进度条
+    card(60, pityY, 600, 64, { r: 32 });
+    text(g, String(QX.pity - qx().pity), 104, pityY + 33, 34, '#ffd23f', { stroke: '#1a0c04', strokeW: 4 });
+    text(g, '次内必得皮肤', 136, pityY + 33, 19, '#fff1d8', { align: 'left' });
+    JQ.rr(g, 290, pityY + 26, 350, 14, 7);
+    g.fillStyle = 'rgba(0,0,0,0.45)';
+    g.fill();
+    JQ.rr(g, 290, pityY + 26, Math.max(14, (350 * qx().pity) / QX.pity), 14, 7);
+    const pg = g.createLinearGradient(290, 0, 640, 0);
+    pg.addColorStop(0, '#c8501c');
+    pg.addColorStop(1, '#ffcf5a');
+    g.fillStyle = pg;
+    g.fill();
+    // 单抽 / 十连：按钮里只写动作，花费用图标 × 数字放按钮下
+    const free = qxFree();
+    button(40, btnY, 300, 88, free ? '免费求贤' : '求贤一次', () => qxDraw(1), { on: free, size: 28 });
+    button(380, btnY, 300, 88, '求贤十次', () => qxDraw(QX.ten), { on: true, size: 28 });
+    if (free) redDot(330, btnY + 8, 11);
+    const costRow = (x, ok, n2, freeTxt) => {
+      if (freeTxt) return text(g, freeTxt, x, btnY + 108, 17, '#ffd23f');
+      qxIcon(x - 40, btnY + 92, 32);
+      text(g, `× ${n2}`, x - 4, btnY + 108, 20, ok ? '#ffe9a0' : '#ff8a6a', { align: 'left', font: 'sans-serif', stroke: '#1a0c04', strokeW: 3 });
+    };
+    costRow(190, qx().tokens >= 1, 1, free ? '今天免费一次' : null);
+    costRow(530, qx().tokens >= QX.ten, QX.ten);
+    button(40, linkY, 300, 48, '概率公示', () => (qxRates = true), { flat: true, size: 19 });
+    button(380, linkY, 300, 48, '雅韵兑换', () => (qxTab = 'skins'), { flat: true, size: 19 });
+  }
+  function drawQxSkins() {
+    const T = pageTop() + 96 + 124, B = pageBottom(), gap = 12, th = (B - T - gap * 2) / 3, tw = (672 - gap) / 2;
+    JQ.SKINS.forEach((sk, i) => {
+      const x = 24 + (i % 2) * (tw + gap), y = T + Math.floor(i / 2) * (th + gap), w = tw, h = th;
+      const own = skinOwned(sk.id), on = qx().equip[sk.hero] === sk.id;
+      skinCard(sk, x, y, w, h, { dim: !own, on });
+      text(g, sk.name, x + 16, y + h - 92, 26, own ? '#ffe9a0' : '#c8b090', { align: 'left', stroke: '#1a1008', strokeW: 4 });
+      const sw = sk.swap === 'ult' ? sk.ult : sk.skill;
+      JQ.statIcon(g, JQ.effectTags(sw)[0] || 'aoe', x + 14, y + h - 80, 30);
+      text(g, sw.name, x + 50, y + h - 64, 17, own ? '#ffb070' : '#9a8f7a', { align: 'left' });
+      text(g, sk.hero, x + w - 16, y + 30, 18, '#ffe9a0', { align: 'right', stroke: '#1a0c04', strokeW: 3 });
+      if (own) button(x + 14, y + h - 50, w - 28, 42, on ? '已穿戴' : '穿 戴', () => equipSkin(sk.hero, sk.id), { on: !on, flat: on, size: 19 });
+      else {
+        const can = qx().yayun >= QX.exchange;
+        button(x + 14, y + h - 50, w - 28, 42, `${QX.exchange} 雅韵兑换`, () => qxExchange(sk.id), { on: can, disabled: !can, size: 17 });
+        JQ.uiDraw(g, 'lock', x + 14, y + 12, 36, 36);
+      }
+    });
+  }
+  function drawQxRates() {
+    buttons.push({ x: -padX, y: -padY, w: C.W + 2 * padX, h: C.H + 2 * padY, fn: () => (qxRates = false) });
+    veil(0.66);
+    popFrame(90, 260, 540, 640, '概率公示');
+    buttons.push({ x: 90, y: 260, w: 540, h: 640, fn: () => {} });
+    iconBtn(588, 240, 48, '×', () => (qxRates = false));
+    const names = { skin: '皮肤（任选一款还没有的）', yayun: '雅韵', coins: '铜钱', stone: '破阵石', seal: '将印（活动英雄随机）' };
+    QX.table.forEach((r, i) => {
+      const y = 350 + i * 56;
+      text(g, names[r.kind] + (r.n ? `  ${r.n[0] === r.n[1] ? r.n[0] : r.n[0] + '~' + r.n[1]}` : ''), 130, y, 17, '#f5ead0', { align: 'left', font: 'sans-serif' });
+      text(g, `${r.p}%`, 590, y, 19, '#ffd23f', { align: 'right', font: 'sans-serif' });
+    });
+    const lines = [`连续 ${QX.pity} 次没出皮肤，第 ${QX.pity} 次必出。`, `六款都有了以后，皮肤折成 ${QX.dupYayun} 雅韵。`, `${QX.exchange} 雅韵可兑换任意一款皮肤。`, '皮肤只换外观和一个技能/大招，和原版强度平级。'];
+    lines.forEach((s, i) => text(g, s, 130, 660 + i * 34, 14, '#d8c8a0', { align: 'left', font: 'sans-serif', bold: false }));
+  }
+  // 抽卡演出：视频（或代码卷轴）→ 新皮肤立绘亮相 → 结果卡依次翻开
+  function drawQxAnim(now) {
+    const a = qxAnim, t = (now - a.t0) / 1000;
+    buttons.push({ x: -padX, y: -padY, w: C.W + 2 * padX, h: C.H + 2 * padY, fn: () => qxAnimTap() });
+    const top = -JQ.VIEW.top, bot = C.H + JQ.VIEW.bot;
+    if (a.phase == null) a.phase = 'video';
+    if (a.phase === 'video') {
+      g.fillStyle = '#000';
+      g.fillRect(-padX, top, C.W + 2 * padX, bot - top);
+      const v = qxVideo, vt = v && qxVideoOk && v.readyState >= 2 && !v.paused;
+      if (vt) {
+        const vw = v.videoWidth || 540, vh = v.videoHeight || 960, W = C.W + 2 * padX, H = bot - top;
+        const s = Math.max(W / vw, H / vh);
+        g.drawImage(v, -padX + (W - vw * s) / 2, top + (H - vh * s) / 2, vw * s, vh * s);
+      } else {
+        // 代码卷轴：两根轴从中间上下拉开
+        const k = Math.min(1, t / 1.2), hh = 40 + 460 * k * k;
+        JQ.fxSprite(g, 'rays', C.W / 2, 600, 900, 900, Math.min(0.8, t), t * 0.4);
+        g.fillStyle = '#b2261a';
+        g.fillRect(C.W / 2 - 170, 600 - hh, 340, hh * 2);
+        g.strokeStyle = '#f0c878';
+        g.lineWidth = 4;
+        g.strokeRect(C.W / 2 - 158, 612 - hh, 316, hh * 2 - 24);
+        for (const sy of [600 - hh - 12, 600 + hh - 12]) (JQ.rr(g, C.W / 2 - 200, sy, 400, 24, 12), (g.fillStyle = '#6a3a14'), g.fill());
+        if (t > 1.3) {
+          const sk = Math.min(1, (t - 1.3) / 0.25), sc = 2.2 - 1.2 * sk;
+          g.save();
+          g.translate(C.W / 2, 600);
+          g.scale(sc, sc);
+          g.globalAlpha = sk;
+          JQ.rr(g, -60, -60, 120, 120, 14);
+          g.fillStyle = '#d0301c';
+          g.fill();
+          text(g, '贤', 0, 4, 76, '#fff1d0');
+          g.restore();
+        }
+      }
+      const done = vt ? v.ended || v.currentTime > 3.9 : t > 1.9;
+      if (done || t > 6) (a.phase = a.skinShow >= 0 ? 'skin' : 'cards'), (a.t1 = now);
+      text(g, '点击跳过', C.W / 2, bot - 60, 14, 'rgba(255,240,210,0.6)', { font: 'sans-serif', bold: false });
+      return;
+    }
+    const t1 = (now - a.t1) / 1000;
+    if (a.phase === 'skin') {
+      // 新皮肤：全屏立绘亮相
+      const sk = JQ.SKIN_BY_ID[a.res[a.skinShow].id];
+      veil(0.92);
+      JQ.fxSprite(g, 'rays', C.W / 2, 560, 1100, 1100, Math.min(0.9, t1 * 2), t1 * 0.3);
+      const k = Math.min(1, t1 / 0.45), e = 1 - Math.pow(1 - k, 3);
+      g.save();
+      g.globalAlpha = k;
+      g.translate(C.W / 2, 560);
+      g.scale(0.82 + 0.18 * e, 0.82 + 0.18 * e);
+      skinCard(sk, -240, -330, 480, 640, { round: 20, on: true });
+      g.restore();
+      if (t1 > 0.4) {
+        const k2 = Math.min(1, (t1 - 0.4) / 0.3);
+        g.save();
+        g.globalAlpha = k2;
+        text(g, '获 得 皮 肤', C.W / 2, 186, 30, '#ffcf5a', { stroke: '#5a1a04', strokeW: 6 });
+        text(g, sk.name, C.W / 2, 948, 46, '#ffe9a0', { stroke: '#3a1a04', strokeW: 7 });
+        text(g, `${sk.hero} · ${qxSwapLine(sk)}`, C.W / 2, 1000, 18, '#f0d8a8', { font: 'sans-serif' });
+        text(g, qx().equip[sk.hero] === sk.id ? '已自动穿戴，出战时生效' : '可在「皮肤图鉴」里穿戴', C.W / 2, 1034, 14, '#c8b090', { font: 'sans-serif', bold: false });
+        g.restore();
+      }
+      for (let i = 0; i < 18; i++) {
+        const ang = i * 2.1 + t1 * 2, rad = 280 + (i % 4) * 30 + 30 * Math.sin(t1 * 3 + i);
+        g.globalAlpha = 0.4 + 0.6 * Math.abs(Math.sin(t1 * 5 + i));
+        text(g, '✦', C.W / 2 + Math.cos(ang) * rad, 560 + Math.sin(ang) * rad * 1.1, 12 + (i % 3) * 4, i % 2 ? '#ffe9a0' : '#fff6d0');
+      }
+      g.globalAlpha = 1;
+      text(g, '点击继续', C.W / 2, bot - 60, 14, 'rgba(255,240,210,0.6)', { font: 'sans-serif', bold: false });
+      return;
+    }
+    // 结果卡：单抽一张大卡，十连 2×5
+    veil(0.95);
+    JQ.fxSprite(g, 'rays', C.W / 2, 520, 900, 900, 0.3, t1 * 0.2);
+    text(g, a.res.length > 1 ? '求 贤 十 次' : '求 贤 结 果', C.W / 2, 250, 32, '#ffe9a0', { stroke: '#2a1a08', strokeW: 5 });
+    const one = a.res.length === 1;
+    a.res.forEach((r, i) => {
+      const appear = Math.max(0, Math.min(1, (t1 - i * 0.11) / 0.22));
+      if (appear <= 0) return;
+      if (appear > 0 && a.shown < i) (a.shown = i), sfx(r.kind === 'skin' ? 'merge' : 'tap');
+      const w = one ? 260 : 120, h = one ? 340 : 164;
+      const x = one ? C.W / 2 - w / 2 : 46 + (i % 5) * 128, y = one ? 330 : 330 + Math.floor(i / 5) * 186;
+      g.save();
+      g.translate(x + w / 2, y + h / 2);
+      g.scale(Math.max(0.05, Math.sin((appear * Math.PI) / 2)), 1); // 翻牌
+      g.translate(-(x + w / 2), -(y + h / 2));
+      qxResultCard(r, x, y, w, h);
+      g.restore();
+    });
+    if (t1 > a.res.length * 0.11 + 0.3) {
+      const y = one ? 760 : 760;
+      button(110, y, 240, 72, '确 定', () => (qxAnim = null), { size: 26 });
+      const n = a.res.length, free = n === 1 && qxFree();
+      button(370, y, 240, 72, n > 1 ? '再求十次' : free ? '今日免费' : '再求一次', () => ((qxAnim = null), qxDraw(n)), { on: true, size: 24 });
+    }
+  }
+  function qxResultCard(r, x, y, w, h) {
+    const skin = r.kind === 'skin';
+    if (skin && !r.dup) {
+      const sk = JQ.SKIN_BY_ID[r.id];
+      skinCard(sk, x, y, w, h, { round: 10, on: true });
+      text(g, sk.name, x + w / 2, y + h - (w > 200 ? 34 : 20), w > 200 ? 26 : 15, '#ffe9a0', { stroke: '#1a1008', strokeW: 4 });
+      return;
+    }
+    JQ.rr(g, x, y, w, h, 10);
+    const grd = g.createLinearGradient(0, y, 0, y + h);
+    grd.addColorStop(0, 'rgba(70,44,22,0.96)');
+    grd.addColorStop(1, 'rgba(34,20,10,0.96)');
+    g.fillStyle = grd;
+    g.fill();
+    g.strokeStyle = 'rgba(230,194,122,0.7)';
+    g.lineWidth = 1.6;
+    g.stroke();
+    const s = Math.min(w, h) * 0.5, ix = x + w / 2 - s / 2, iy = y + h * 0.18;
+    let label = '';
+    if (r.kind === 'yayun' || (skin && r.dup)) (qxYayunIcon(ix, iy, s), (label = `雅韵 ×${r.n}`));
+    else if (r.kind === 'coins') (JQ.uiDraw(g, 'coin', ix + s * 0.1, iy + s * 0.1, s * 0.8, s * 0.8), (label = `铜钱 ×${r.n}`));
+    else if (r.kind === 'stone') (JQ.iconDraw(g, 'stone', ix, iy, s, s) || actStoneIcon(ix, iy, s), (label = `破阵石 ×${r.n}`));
+    else if (r.kind === 'seal') (JQ.iconDraw(g, 'seal', ix, iy, s, s) || actSealIcon(r.hero, ix, iy, s), (label = `${r.hero}将印 ×${r.n}`));
+    text(g, label, x + w / 2, y + h - (w > 200 ? 40 : 26), w > 200 ? 22 : 13, '#ffe9a0', { font: 'sans-serif', stroke: '#1a1008', strokeW: 3 });
+    if (skin && r.dup) text(g, '重复皮肤', x + w / 2, y + h - (w > 200 ? 70 : 46), w > 200 ? 15 : 11, '#ffb070', { font: 'sans-serif' });
+  }
+  function qxAnimTap() {
+    const a = qxAnim;
+    if (!a) return;
+    const now = performance.now();
+    if (a.phase === 'video') {
+      if (qxVideo) try { qxVideo.pause(); } catch (e) {}
+      a.phase = a.skinShow >= 0 ? 'skin' : 'cards';
+      a.t1 = now;
+    } else if (a.phase === 'skin' && now - a.t1 > 500) (a.phase = 'cards'), (a.t1 = now);
+    else if (a.phase === 'cards' && now - a.t1 < a.res.length * 110 + 300) a.t1 = now - a.res.length * 110 - 300; // 一下翻完
+  }
+  function drawQiuxian() {
+    drawQxTop();
+    if (qxTab === 'draw') drawQxDraw();
+    else drawQxSkins();
+    if (qxRates) drawQxRates();
+    if (qxToast) {
+      const k = (performance.now() - qxToast.t0) / 2400;
+      if (k >= 1) qxToast = null;
+      else {
+        g.save();
+        g.globalAlpha = Math.min(1, (1 - k) * 4);
+        JQ.rr(g, 110, 600, 500, 56, 14);
+        g.fillStyle = 'rgba(18,11,6,0.92)';
+        g.fill();
+        text(g, qxToast.s, C.W / 2, 629, 16, '#ffe9a0', { font: 'sans-serif' });
+        g.restore();
+      }
+    }
+    if (qxAnim) drawQxAnim(performance.now());
+  }
+
+  // ---------- 第一关新手引导 ----------
+  // 经典第 1 关第一次进入时触发：聚光框 + 手势 + 一句话；等玩家做完这一步才继续，等待时战斗暂停。
+  const TUT_KEY = 'jq_tut';
+  let tut = null;
+  function startTutorial() {
+    tut = { step: 0, t0: performance.now(), hero: null };
+  }
+  const tutFreeze = () => tut && tut.step !== 1;
+  function tutNext() {
+    tut.step++;
+    tut.t0 = performance.now();
+    const s = game.sides[0];
+    if (tut.step === 2 && s.buns < s.recruitCost()) s.buns = s.recruitCost(); // 保证能点招兵
+    if (tut.step === 3) {
+      // 塞两张能合成英雄的字卡到招兵栏前两格
+      const h = (JQ.PACKS[s.pack].heroes || []).map((n) => HEROES[n]).find((d) => d && d.chars && d.chars.length === 2);
+      if (h) (tut.hero = h.name), (s.shop[0] = JQ.makeCard('char', h.chars[0], 1)), (s.shop[1] = JQ.makeCard('char', h.chars[1], 1));
+      else tut.step++;
+    }
+    if (tut.step >= 5) (tut = null), localStorage.setItem(TUT_KEY, '1');
+  }
+  function tutEvent(ev, d) {
+    if (!tut || !d || d.side !== 0) return;
+    if (tut.step === 0 && ev === 'place') tutNext();
+    else if (tut.step === 2 && ev === 'recruit') tutNext();
+    else if (tut.step === 3 && ev === 'place') setTimeout(() => tut && tut.step === 3 && game.sides[0].board.links.some((l) => l.hero === tut.hero) && tutNext(), 0); // 等棋盘重算连字后再判断
+  }
+  // 引导期间的点击：跳过 / 信息步点一下继续；返回 true 表示被引导吃掉
+  function tutTap(p) {
+    if (!tut) return false;
+    const sk = tutSkipRect();
+    if (inRect(p, sk)) return (tut = null), localStorage.setItem(TUT_KEY, '1'), true;
+    if (tut.step === 1 && performance.now() - tut.t0 > 800) return tutNext(), true;
+    if (tut.step === 4) return tutNext(), true;
+    return false;
+  }
+  const tutSkipRect = () => ({ x: 556, y: 560, w: 132, h: 52 });
+  function tutEmptyCells(n) {
+    const out = [];
+    for (const x of game.sides[0].board.all()) if (x.unlocked && !x.crystal && !x.card && x.r >= 0) out.push(x);
+    if (n === 2) {
+      for (const a of out) {
+        const b = out.find((x) => x.r === a.r && x.c === a.c + 1);
+        if (b) return [a, b];
+      }
+      return out.slice(0, 2);
+    }
+    return out.slice(0, n);
+  }
+  function drawTutorial() {
+    if (!tut) return;
+    const now = performance.now(), k = (now - tut.t0) / 1000, s = game.sides[0];
+    if (tut.step === 3 && s.board.links.some((l) => l.hero === tut.hero)) tutNext();
+    if (tut.step === 1 && k > 5) tutNext();
+    if (!tut) return;
+    // 聚光：要点的地方挖空，其余压暗
+    const holes = [], hand = [];
+    let say = '', sub = '';
+    if (tut.step === 0) {
+      const si = s.shop.findIndex((c) => c && c.kind === 'unit');
+      const cell = tutEmptyCells(1)[0];
+      if (si >= 0) holes.push(JQ.shopRect(si));
+      if (cell) holes.push(JQ.cellRect(0, cell.r, cell.c));
+      if (holes.length === 2) hand.push(holes[0], holes[1]);
+      say = '把兵卡拖进格子';
+      sub = '按住卡片拖到亮着的格子里';
+    } else if (tut.step === 1) {
+      say = '主角走过兵卡就召兵';
+      sub = '点任意处继续';
+    } else if (tut.step === 2) {
+      holes.push(JQ.UI.recruit);
+      hand.push(JQ.UI.recruit);
+      say = '点「招兵」换一排新卡';
+      sub = '备战席剩下的卡会自动卖掉';
+    } else if (tut.step === 3) {
+      const cells = tutEmptyCells(2);
+      holes.push(JQ.shopRect(0), JQ.shopRect(1));
+      cells.forEach((c) => holes.push(JQ.cellRect(0, c.r, c.c)));
+      if (cells.length === 2) hand.push(JQ.shopRect(0), JQ.cellRect(0, cells[0].r, cells[0].c));
+      say = `两字左右相邻 = ${tut.hero}`;
+      sub = '把这两个字并排放进格子';
+    } else if (tut.step === 4) {
+      say = '英雄 3 级放大招';
+      sub = '打爆对面基地就赢！点任意处开始';
+    }
+    if (tut.step !== 1) {
+      g.save();
+      g.beginPath();
+      g.rect(-padX, -padY, C.W + 2 * padX, C.H + 2 * padY);
+      for (const h of holes) g.rect(h.x - 6, h.y - 6, h.w + 12, h.h + 12);
+      g.fillStyle = 'rgba(10,6,2,0.72)';
+      g.fill('evenodd');
+      const pulse = 0.6 + 0.4 * Math.sin(k * 6);
+      g.strokeStyle = `rgba(255,214,90,${pulse})`;
+      g.lineWidth = 4;
+      for (const h of holes) (JQ.rr(g, h.x - 6, h.y - 6, h.w + 12, h.h + 12, 10), g.stroke());
+      g.restore();
+    }
+    // 手势：两点之间来回拖，或在一点上点按
+    if (hand.length) {
+      const a = hand[0], b = hand[1] || hand[0], f = b === a ? 0 : (k % 1.6) / 1.2;
+      const t = Math.min(1, Math.max(0, f)), x = a.x + a.w / 2 + (b.x - a.x + (b.w - a.w) / 2) * t, y = a.y + a.h / 2 + (b.y - a.y + (b.h - a.h) / 2) * t;
+      const tap = b === a ? 1 + 0.12 * Math.sin(k * 8) : 1;
+      g.save();
+      g.translate(x + 10, y + 18);
+      g.scale(tap, tap);
+      text(g, '👆', 0, 0, 64, '#fff');
+      g.restore();
+    }
+    // 提示气泡：屏幕中部（两军之间）
+    const by = 470;
+    card(32, by, 656, 150, { r: 18, light: true });
+    text(g, say, 60, by + 52, 32, '#ffe9a0', { align: 'left', stroke: '#1a0c04', strokeW: 5 });
+    text(g, sub, 62, by + 104, 20, '#f0e0c0', { align: 'left', font: 'sans-serif', bold: false });
+    text(g, `${tut.step + 1}/5`, 664, by + 40, 18, '#c8b090', { align: 'right', font: 'sans-serif' });
+    const sk = tutSkipRect();
+    card(sk.x, sk.y, sk.w, sk.h, { dim: true, r: 26 });
+    text(g, '跳过', sk.x + sk.w / 2, sk.y + sk.h / 2 + 1, 20, '#e8d8b0');
   }
 
   // ---------- 主循环 ----------
@@ -2929,6 +3980,7 @@
     else if (screen === 'units') drawUnits();
     else if (screen === 'mainhero') drawMainHero();
     else if (screen === 'activity') drawActivity();
+    else if (screen === 'qiuxian') drawQiuxian();
     else if (screen === 'testlab') drawTestLab();
     else if (screen === 'testplay') {
       if (testLab.game) {
@@ -2948,11 +4000,11 @@
       drawTestOver();
     }
     else if (screen === 'talents') {
-      if (menuGame) JQ.render(menuGame, menuView);
+      JQ.drawBackdrop(g);
       drawTalents();
     }
     else if (screen === 'help' && helpBack === 'menu') {
-      if (menuGame) JQ.render(menuGame, menuView);
+      JQ.drawBackdrop(g);
       helpPage ? drawRoster() : drawHelp();
     }
     else {
@@ -2961,6 +4013,7 @@
         let slow = 1;
         if (game.hitstop > 0) (slow = 0.12), (game.hitstop -= dt);
         acc += dt * view.speed * slow;
+        if (tutFreeze()) acc = 0; // 引导等玩家操作时战斗暂停
         while (acc >= STEP) {
           if (!game.R.waves && (aiT -= STEP) <= 0) (JQ.aiThink(game, 1), (aiT = game.diff.think));
           if (AUTO && (autoT -= STEP) <= 0) (JQ.aiThink(game, 0), (autoT = JQ.DIFF.human.think));
@@ -2978,6 +4031,7 @@
       // 基地残血：心跳声
       if (screen === 'play' && !game.over && !game.R.waves && game.sides[0].hp < game.sides[0].maxHp * 0.3 && nowMs - lastHeart > 1200) (lastHeart = nowMs), sfx('heart');
       JQ.render(game, view);
+      if (screen === 'play' && !game.over) drawTutorial();
       if (screen === 'paused') drawPause();
       else if (screen === 'over') drawOver();
       else if (screen === 'help') helpPage ? drawRoster() : drawHelp();
@@ -3012,6 +4066,17 @@
     }
     prog.act.stone = Math.max(prog.act.stone || 0, 60);
     saveProg();
+    syncSkinArt();
+  }
+  // 调试：?main=吕布 直接设本命将
+  const urlMain = decodeURIComponent((location.search.match(/[?&]main=([^&]+)/) || [])[1] || '');
+  if (HEROES[urlMain]) setMain(urlMain);
+  // 调试：?skin=lvbu_chitu,wukong_fo 直接获得并穿上这些皮肤
+  const urlSkin = (location.search.match(/[?&]skin=([\w,]+)/) || [])[1];
+  if (urlSkin) {
+    for (const id of urlSkin.split(',')) if (JQ.SKIN_BY_ID[id]) (prog.qx.owned[id] = true), (prog.qx.equip[JQ.SKIN_BY_ID[id].hero] = id);
+    saveProg();
+    syncSkinArt();
   }
   if (urlScreen === 'custom') openCustom();
   else if (urlScreen === 'stages') openStages();
@@ -3023,6 +4088,12 @@
     const hero = (location.search.match(/[?&]hero=([^&]+)/) || [])[1];
     if (hero && ACT.byHero[decodeURIComponent(hero)]) actHero = decodeURIComponent(hero);
     openActivity();
+  } else if (urlScreen === 'qiuxian') {
+    // 调试：?screen=qiuxian&tab=skins&qx=10 直接打开求贤页，并补足求贤令/雅韵
+    const tab = (location.search.match(/[?&]tab=(\w+)/) || [])[1];
+    const add = +(location.search.match(/[?&]qx=(\d+)/) || [])[1] || 0;
+    if (add) (prog.qx.tokens = Math.max(prog.qx.tokens, add)), (prog.qx.yayun = Math.max(prog.qx.yayun, add * 12)), saveProg();
+    openQiuxian(tab === 'skins' ? 'skins' : 'draw');
   } else if (urlScreen === 'paused') newGame(), (screen = 'paused');
   if (AUTO) {
     newGame();
@@ -3044,6 +4115,9 @@
     get custom() { return { heroes: customHeroes.slice(), units: customUnits.slice() }; },
     openActivity, startActivityStage, claimActTask, doBreakthrough, showHero: (n) => (HEROES[n] ? (rosterSel = n) : null),
     brkUp, brkOf, get activity() { return activityStage; },
+    openQiuxian, qxDraw, qxExchange, equipSkin, qxAnimTap, get qxAnim() { return qxAnim; },
+    get tut() { return tut; }, tutNext: () => tutNext(), startTutorial: () => startTutorial(),
+    qxReset: () => (qxAnim = null), setQx: (o) => (Object.assign(prog.qx, o), saveProg(), syncSkinArt()),
     get prog() { return JSON.parse(JSON.stringify(prog)); },
     giveMats: (stone, seal) => {
       prog.act.stone += stone || 0;

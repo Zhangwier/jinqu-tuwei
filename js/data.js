@@ -390,7 +390,7 @@
           title: '定海神针', stat: { hp: 1.05, atk: 1.05 },
           summary: '金箍棒眩晕延长到 1.2 秒，并留下 2 秒定身金圈。',
           skillAdd: [{ t: 'zone', at: 'densest', r: 100, dur: 2, tick: 0.45, mult: 0.7, stun: true, glyphs: '定' }],
-          skillPatch: { desc: '金箍棒砸向敌群，眩晕 1.2 秒并留下定身金圈', doStun: 1.2 },
+          skillPatch: { desc: '金箍棒砸向敌群，眩晕 1.2 秒并留下定身金圈', doStun: 1.2, skinNote: '并留下 2 秒定身金圈' },
         },
         {
           title: '身外身', stat: { hp: 1.05, atk: 1.05 },
@@ -488,9 +488,11 @@
     return JQ.BREAKTHROUGH.costs[level];
   };
   // 纯函数：返回某位英雄在 brk 级突破后的战斗定义（不修改原始 HEROES）
-  JQ.heroAtBrk = function (name, brk) {
-    const base = HEROES[name];
+  // skinned：JQ.heroDef 传进来的已套皮肤的定义（换了技能/大招），突破叠在它上面
+  JQ.heroAtBrk = function (name, brk, skinned) {
+    const base = skinned || HEROES[name];
     const b = JQ.BREAKTHROUGH.byHero[name];
+    const sk = skinned && JQ.SKIN_BY_ID[skinned.skin];
     brk = Math.max(0, Math.min(3, Math.floor(brk || 0)));
     if (!base || !b || !brk) return base;
     const def = Object.assign({}, base, { brk });
@@ -504,11 +506,18 @@
       if (L.stat) (hp *= L.stat.hp || 1), (atk *= L.stat.atk || 1);
       if (L.skillAdd) def.skill.do.push(...L.skillAdd.map((e) => Object.assign({}, e)));
       if (L.skillPatch) {
-        if (L.skillPatch.desc) def.skill.desc = L.skillPatch.desc;
-        if (L.skillPatch.doStun) for (const e of def.skill.do) if (e.t === 'aoe' && e.stun != null) e.stun = L.skillPatch.doStun;
+        // 皮肤换了小技能时，原技能的补丁不套用，只补一句突破新增的效果
+        if (sk && sk.swap === 'skill') {
+          if (L.skillPatch.skinNote) def.skill.desc += '；' + L.skillPatch.skinNote;
+        } else {
+          if (L.skillPatch.desc) def.skill.desc = L.skillPatch.desc;
+          if (L.skillPatch.doStun) for (const e of def.skill.do) if (e.t === 'aoe' && e.stun != null) e.stun = L.skillPatch.doStun;
+        }
       }
       if (L.skillNote) def.skill.desc = (def.skill.desc || '') + '；' + L.skillNote;
-      if (L.ult) def.ult = Object.assign({}, L.ult, { do: (L.ult.do || []).map((e) => Object.assign({}, e)) });
+      // 二突大招进化：皮肤换过大招的，用皮肤自己的进化版
+      const evo = L.ult && (sk && sk.swap === 'ult' ? sk.ult2 : L.ult);
+      if (evo) def.ult = Object.assign({}, evo, { do: (evo.do || []).map((e) => Object.assign({}, e)) });
       if (L.exclusive) {
         Object.assign(def.passive, L.exclusive.add || {});
         def.passiveExtra = { name: L.exclusive.name, desc: L.exclusive.desc };
@@ -518,6 +527,114 @@
     def.hp = Math.round(base.hp * hp * 10) / 10;
     def.atk = Math.round(base.atk * atk * 10) / 10;
     return def;
+  };
+
+  // ---------- 皮肤（求贤抽取）----------
+  // 皮肤只换外观（立绘、光晕色、字的描边色）和一个技能/大招，强度与原版平级。
+  // swap='ult'：ult 给未二突时用，ult2 给二突（大招进化）后用；swap='skill'：替换小技能，突破的技能加成照样叠上去。
+  const SKINS = [
+    {
+      id: 'lvbu_chitu', hero: '吕布', name: '赤兔·烈焰', art: 'skin_lvbu_chitu', aura: '#ff6a1a', halo: 'rgba(255,176,70,0.95)', swap: 'ult',
+      line: '赤兔踏火，一骑破阵',
+      ult: { name: '赤兔踏阵', cd: 18, desc: '骑赤兔冲锋 2.6 倍伤害并击退，身后一道火路 2.8 倍伤害并灼烧 3 秒，自身获 30% 护盾', range: 320,
+        do: [{ t: 'line', len: 300, width: 60, mult: 2.8, burn: 3, fx: 'warhorse' }, { t: 'dash', mult: 2.6, knock: true }, { t: 'shield', self: 0.3 }] },
+      ult2: { name: '赤兔·焚原', cd: 18, desc: '赤兔冲锋 4 倍伤害并击退，火路 4.4 倍伤害灼烧 4 秒，自身获 40% 护盾、攻击 +20% 持续 6 秒', range: 340,
+        do: [{ t: 'line', len: 380, width: 76, mult: 4.4, burn: 4, fx: 'warhorse' }, { t: 'dash', mult: 4, knock: true }, { t: 'shield', self: 0.4 }, { t: 'buff', self: true, atk: 1.2, dur: 6, fx: 'warcry', text: '焚原' }] },
+    },
+    {
+      id: 'lvbu_yuanmen', hero: '吕布', name: '辕门射戟', art: 'skin_lvbu_yuanmen', aura: '#bfe0ff', halo: 'rgba(214,236,255,0.95)', swap: 'skill',
+      line: '一箭解两家之围',
+      skill: { name: '辕门一箭', cd: 8, desc: '张弓射出贯穿重箭，直线 3.4 倍伤害', do: [{ t: 'pierce', mult: 3.4, width: 22, speed: 760, life: 0.85, kind: 'arrow' }] },
+    },
+    {
+      id: 'wukong_tiangong', hero: '悟空', name: '大闹天宫', art: 'skin_wukong_tiangong', aura: '#ff9a20', halo: 'rgba(255,208,96,0.95)', swap: 'ult',
+      line: '玉帝老儿，俺老孙来也',
+      ult: { name: '大闹天宫', cd: 18, desc: '金箍棒从天而降 6 次，每次 2 倍伤害；自身获 30% 护盾、攻击 +25% 持续 8 秒', range: 999,
+        do: [{ t: 'bolts', n: 6, mult: 2, all: true, interval: 0.16, fx: 'staff' }, { t: 'shield', self: 0.3 }, { t: 'buff', self: true, atk: 1.25, dur: 8, fx: 'warcry', text: '齐天' }] },
+      ult2: { name: '棒打凌霄', cd: 18, desc: '金箍棒从天而降 8 次，每次 2.2 倍伤害；身边震地 2 倍，自身获 40% 护盾、攻击 +30% 持续 10 秒', range: 999,
+        do: [{ t: 'bolts', n: 8, mult: 2.2, all: true, interval: 0.14, fx: 'staff' }, { t: 'aoe', at: 'self', r: 130, mult: 2, fx: 'staff' }, { t: 'shield', self: 0.4 }, { t: 'buff', self: true, atk: 1.3, dur: 10, fx: 'warcry', text: '齐天' }] },
+    },
+    {
+      id: 'wukong_fo', hero: '悟空', name: '斗战胜佛', art: 'skin_wukong_fo', aura: '#ffe680', halo: 'rgba(255,244,190,0.95)', swap: 'skill',
+      line: '心猿归正，六贼无踪',
+      skill: { name: '佛光普照', cd: 7, desc: '佛光砸向敌群 2.2 倍伤害并眩晕 0.4 秒，身边友军回复 8% 血量', range: 220,
+        do: [{ t: 'aoe', at: 'densest', r: 110, mult: 2.2, stun: 0.4, fx: 'lotus' }, { t: 'heal', r: 220, pct: 0.08 }] },
+    },
+    {
+      id: 'yuefei_mjh', hero: '岳飞', name: '满江红', art: 'skin_yuefei_mjh', aura: '#ff3a2a', halo: 'rgba(255,150,120,0.95)', swap: 'ult',
+      line: '怒发冲冠，凭栏处',
+      ult: { name: '满江红', cd: 17, desc: '枪出红焰，扇形 2.4 倍伤害并灼烧 3 秒；友军攻击 +30% 持续 6 秒', range: 340,
+        do: [{ t: 'cone', len: 320, width: 200, mult: 2.4, burn: 3, fx: 'firewave' }, { t: 'buff', r: 300, atk: 1.3, dur: 6, fx: 'warcry', text: '满江红' }] },
+      ult2: { name: '怒发冲冠', cd: 17, desc: '红焰横扫，扇形 3.2 倍伤害灼烧 4 秒；友军攻击 +40% 并获 10% 护盾，持续 8 秒', range: 380,
+        do: [{ t: 'cone', len: 400, width: 260, mult: 3.2, burn: 4, fx: 'firewave', big: true }, { t: 'shield', allies: 0.1, r: 320 }, { t: 'buff', r: 320, atk: 1.4, dur: 8, fx: 'warcry', text: '怒发冲冠' }] },
+    },
+    {
+      id: 'yuefei_beiwei', hero: '岳飞', name: '背嵬铁骑', art: 'skin_yuefei_beiwei', aura: '#c8a050', halo: 'rgba(236,210,150,0.95)', swap: 'skill',
+      line: '撼山易，撼岳家军难',
+      skill: { name: '背嵬冲阵', cd: 12, desc: '召 2 名背嵬骑兵，并率骑冲阵：直线 1.6 倍伤害', do: [{ t: 'summon', unit: '骑', n: 2, fx: 'portal' }, { t: 'line', len: 220, width: 40, mult: 1.6, fx: 'warhorse' }] },
+    },
+  ];
+  JQ.SKINS = SKINS;
+  JQ.SKIN_BY_ID = {};
+  for (const s of SKINS) JQ.SKIN_BY_ID[s.id] = s;
+  JQ.skinsOf = (hero) => SKINS.filter((s) => s.hero === hero);
+  // 求贤（抽皮肤）：求贤令只靠玩游戏获得；30 抽保底；重复皮肤折雅韵，雅韵可兑换指定皮肤
+  JQ.QIUXIAN = {
+    pity: 30, dupYayun: 30, exchange: 120, ten: 10,
+    // 每抽概率（%）：皮肤 4；其余是雅韵/铜钱/破阵石/将印
+    table: [
+      { kind: 'skin', p: 4 },
+      { kind: 'yayun', p: 16, n: [10, 20] },
+      { kind: 'coins', p: 40, n: [60, 120] },
+      { kind: 'stone', p: 25, n: [1, 2] },
+      { kind: 'seal', p: 15, n: [1, 1] },
+    ],
+  };
+
+  // 玩家方英雄的最终定义：先套皮肤，再叠突破；没有皮肤也没突破就是原始定义
+  JQ.heroDef = function (name, brk, skinId) {
+    const sk = skinId && JQ.SKIN_BY_ID[skinId];
+    if (!sk || sk.hero !== name) return JQ.heroAtBrk(name, brk);
+    const base = HEROES[name];
+    const skinned = Object.assign({}, base, { aura: sk.aura, halo: sk.halo, skin: sk.id });
+    if (sk.swap === 'skill') skinned.skill = Object.assign({}, sk.skill, { need: base.skill.need });
+    if (sk.swap === 'ult') skinned.ult = sk.ult;
+    return JQ.heroAtBrk(name, brk, skinned);
+  };
+
+  // 技能/被动 → 效果标签（图标 id + 两字名），界面用图标表达，不用整段文字
+  const TAG_NAME = { aoe: '范围', bolt: '雷击', fire: '灼烧', dash: '冲锋', summon: '召唤', clone: '分身', heal: '治疗', shield: '护盾', buff: '增益', ctrl: '控制', knock: '击退', slow: '减速', crit: '暴击', drain: '吸血', stealth: '隐身', bun: '产包子', aura: '光环', armor: '减伤', atk: '增伤', range: '远程' };
+  JQ.TAG_NAME = TAG_NAME;
+  JQ.effectTags = function (def) {
+    const out = [];
+    const add = (t) => !out.includes(t) && out.push(t);
+    for (const e of (def && def.do) || []) {
+      if (e.burn) add('fire');
+      if (e.stun || e.charm || e.t === 'taunt' || e.t === 'stunTarget') add('ctrl');
+      if (e.knock || e.t === 'push') add('knock');
+      if (e.slow) add('slow');
+      const m = { aoe: 'aoe', spins: 'aoe', cone: 'aoe', line: 'aoe', pierce: 'aoe', zone: 'aoe', bolts: 'bolt', dash: 'dash', leap: 'dash', blink: 'dash', chain: 'dash', summon: 'summon', clone: 'clone', heal: 'heal', shield: 'shield', buff: 'buff', homing: 'aoe' }[e.t];
+      if (m) add(m);
+    }
+    return out.slice(0, 4);
+  };
+  JQ.passiveTags = function (P) {
+    const out = [];
+    const add = (t) => !out.includes(t) && out.push(t);
+    if (!P) return out;
+    if (P.crit) add('crit');
+    if (P.lifesteal || P.rampage) add('drain');
+    if (P.regen || P.auraRegen) add('heal');
+    if (P.periodicShield || P.deathWarcry) add('shield');
+    if (P.income) add('bun');
+    if (P.auraAtk || P.auraDr) add('aura');
+    if (P.stealth || P.dodge) add('stealth');
+    if (P.burn) add('fire');
+    if (P.auraSlow || P.slowOnHit) add('slow');
+    if (P.rangedReduce || P.thorns || P.dr || P.lowHpDr) add('armor');
+    if (P.atkMult || P.heroBonus || P.longShot || P.rage) add('atk');
+    if (P.autoMerge) add('buff');
+    return out.slice(0, 4);
   };
 
   // 卡包：决定招兵能抽到哪些字、能合哪些英雄、能抽到哪些小兵
