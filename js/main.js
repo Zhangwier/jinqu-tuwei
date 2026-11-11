@@ -718,6 +718,7 @@
         localStorage.setItem('jq_player', JSON.stringify(player));
         localStorage.setItem('jq_records', JSON.stringify(records));
         lastProg = grantProgress(game, d.winner === 0);
+        if (window.Arcade) setTimeout(() => window.Arcade.sync('jinqu'), 800); // 关卡进度已存盘，同步到排行榜
         lastMvp = mvpOf(game);
         setTimeout(() => ((screen = 'over'), (overAt = performance.now())), 900);
       }
@@ -1504,6 +1505,8 @@
     drawSideEntry(18, 300, '突破', (x, y, s) => JQ.iconDraw(g, 'breakthrough', x, y, s, s), () => openActivity('brk'), actDot());
     drawSideEntry(18, 430, '选关', (x, y, s) => JQ.iconDraw(g, 'stage', x, y, s, s), () => (mode === 'endless' ? sfx('bad') : openStages()), false);
     drawSideEntry(18, 560, '玩法', ui('ic_help'), () => ((helpBack = 'menu'), (helpPage = 0), (screen = 'help')), false);
+    // 游戏厅排行榜（/arcade/arcade.js，三款游戏共用账号）
+    drawSideEntry(18, 690, '排行', (x, y, s2) => JQ.ui2Draw(g, 'laurel', x - 4, y - 2, s2 + 8, s2 + 6), () => window.Arcade && window.Arcade.open('jinqu'), false);
     drawSideEntry(618, 300, '设置', ui('ic_gear'), () => (menuPop = 'settings'), false);
     drawSideEntry(618, 430, '自定义', ui('ic_custom'), () => openCustom(), false);
     drawSideEntry(618, 560, '测试场', ui('ic_test'), () => openTestLab(), false);
@@ -3488,7 +3491,7 @@
     v.preload = 'auto';
     v.addEventListener('canplay', () => (qxVideoOk = true));
     v.addEventListener('error', () => (qxVideoOk = false));
-    v.src = 'img/qx_reveal.mp4?v=20261111c';
+    v.src = 'img/qx_reveal.mp4?v=20261111d';
     qxVideo = v;
     return v;
   }
