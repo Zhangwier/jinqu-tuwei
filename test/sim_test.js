@@ -258,6 +258,20 @@ const card = (k, key, lv) => JQ.makeCard(k, key, lv);
     g.tryHero(s, link);
     assert.strictEqual(g.heroCount(s, '张飞'), 3, '3 级张飞最多同时 3 个');
   }
+  // 格子上限 20、招兵栏最多 3 张字卡
+  {
+    const g = new JQ.Game({ seed: 11, pack: 'sanguo' });
+    const s = g.sides[0], b = s.board;
+    for (let k = 0; k < 40 && b.tileFits(); k++) {
+      const f = b.frontier()[0];
+      b.placeTile('田', f.r, f.c) || b.placeTile('单', f.r, f.c);
+    }
+    assert.ok(b.usableCells() <= JQ.C.MAX_CELLS, `可用格子不超过 ${JQ.C.MAX_CELLS}（实际 ${b.usableCells()}）`);
+    let maxChars = 0;
+    for (let k = 0; k < 300; k++) (g.fillShop(0), (maxChars = Math.max(maxChars, s.shop.filter((c) => c && c.kind === 'char').length)));
+    assert.ok(maxChars <= 3, '招兵栏一次最多 3 张字卡');
+    assert.ok(!s.shop.some((c) => c && c.kind === 'tile') || b.tileFits(), '格子满了不再出格子块');
+  }
   // 兵种池：三国/西游/唐朝各有不同兵种，同字同属性
   {
     assert.ok(JQ.packUnits('sanguo').includes('骑') && JQ.packUnits('sanguo').includes('弩'));

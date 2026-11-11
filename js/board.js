@@ -195,10 +195,16 @@
       return best;
     }
 
+    usableCells() {
+      return this.all().filter((x) => x.unlocked && !x.crystal).length;
+    }
     placeTile(key, r, c) {
       const at = this.tileAnchor(key, r, c);
       if (!at) return null;
-      for (const x of at.cells) x.unlocked = true;
+      // 格子上限：超出的格子自动跳过（和「放不全」一样处理）
+      let room = (this.maxCells || Infinity) - this.usableCells();
+      if (room <= 0) return null;
+      for (const x of at.cells) if (room-- > 0) x.unlocked = true;
       this.rebuild();
       return at;
     }
@@ -209,7 +215,7 @@
     }
 
     tileFits(key) {
-      return this.frontier().length > 0;
+      return this.frontier().length > 0 && this.usableCells() < (this.maxCells || Infinity);
     }
 
     emptyCells() {

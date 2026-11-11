@@ -72,6 +72,7 @@
       this.pack = game.packs[id];
       this.board = new JQ.Board(this.pack);
       const R = game.R;
+      this.board.maxCells = R.maxCells || Infinity;
       const T = (this.T = game.talents[id]);
       this.hp = this.maxHp = Math.round((R.baseHp + T.baseHp) * T.baseHpMult);
       this.buns = R.startBuns + T.startBuns;
@@ -309,17 +310,22 @@
       return [...want];
     }
 
-    rollCard(sid, allowPity) {
+    // ban：这次不许出的种类（字卡到上限 / 格子满了）
+    rollCard(sid, allowPity, ban) {
       this.lastPity = false;
       const pool = this.shopPool(sid);
-      let x = this.rand() * pool.total;
       let p = pool[0];
-      for (const q of pool) {
-        x -= q.w;
-        if (x <= 0) {
-          p = q;
-          break;
+      for (let tries = 0; tries < 30; tries++) {
+        let x = this.rand() * pool.total;
+        p = pool[0];
+        for (const q of pool) {
+          x -= q.w;
+          if (x <= 0) {
+            p = q;
+            break;
+          }
         }
+        if (!ban || !ban.has(p.kind)) break;
       }
       const s = this.sides[sid];
       // 自定义包带夏夏：前两张文字卡必出「夏」，方便尽早成夏夏
@@ -345,11 +351,18 @@
     fillShop(sid) {
       const s = this.sides[sid];
       let allowPity = true;
+      const b = s.board;
+      // 字卡每排最多 charMax 张（有加字卡的天赋再 +1）；格子满了不出格子块
+      const charMax = (this.R.charMax || 5) + ((s.T.w && s.T.w.char > 1) || s.T.charPity ? 1 : 0);
+      let chars = 0;
       for (let i = 0; i < C.SHOP_SIZE; i++) {
-        s.shop[i] = this.rollCard(sid, allowPity);
+        const ban = new Set();
+        if (chars >= charMax) ban.add('char');
+        if (!b.tileFits()) ban.add('tile');
+        s.shop[i] = this.rollCard(sid, allowPity, ban);
+        if (s.shop[i] && s.shop[i].kind === 'char') chars++;
         if (this.lastPity) allowPity = false; // 一次刷新最多保底一张，避免某个字刷屏
       }
-      const b = s.board;
       const hasTile = () => s.shop.some((h) => h && h.kind === 'tile');
       if (hasTile()) s.tileDry = 0;
       else s.tileDry++;
@@ -1095,8 +1108,9 @@
       }
       this.damage(u, t, u.atk);
       this.addFx({ kind: 'slash', x: (u.x + t.x) / 2, y: (u.y + t.y) / 2, life: 0.2, side: u.side, ang: Math.atan2(t.y - u.y, t.x - u.x), big: u.isHero, color: u.isHero ? HEROES[u.key].aura : null });
-      // 三头六臂：顺带打到附近几个敌人
-      const sp = u.passive && u.passive.splash;
+      // 三头六臂等溅射被动；英雄普攻自带横扫（取两者较大的）
+      let sp = u.passive && u.passive.splash;
+      if (u.isHero && C.HERO_CLEAVE && (!sp || sp.n * sp.pct < 3 * C.HERO_CLEAVE)) sp = { n: 3, pct: C.HERO_CLEAVE };
       if (sp && foes) {
         const others = foes.filter((f) => f !== t && f.hp > 0 && Math.hypot(f.x - t.x, f.y - t.y) < 80).slice(0, sp.n);
         for (const f of others) {
@@ -1154,6 +1168,7 @@
         if (SP.rage) mult *= 1 + SP.rage * (1 - src.hp / src.maxHp);
         if (SP.rampage && src.isHero) mult *= 1 + SP.rampage.pct * (src.rampageStacks || 0);
       }
+      if (t.isHero && src && !src.isHero && !opts.skill && C.HERO_UNIT_DR) mult *= 1 - C.HERO_UNIT_DR; // 英雄被小兵普攻减伤
       if (t.drUntil > this.time) mult *= 1 - t.dr;
       if (TP.dr) mult *= 1 - TP.dr;
       if (t.bondDr) mult *= 1 - t.bondDr;
@@ -1296,6 +1311,16 @@
         if (d <= sp + 8) {
           p.dead = true;
           this.damage(p.src, t, p.dmg, p.kind === 'fox' ? { skill: true, ult: p.ult } : null);
+          // 远程英雄普攻命中溅射身边两个敌人
+          if (p.kind !== 'fox' && p.src && p.src.isHero && C.HERO_SHOT_SPLASH) {
+            let k = 0;
+            for (const f of this.units) {
+              if (k >= 2) break;
+              if (f === t || f.side === p.src.side || f.hp <= 0 || f.isOutpost || Math.hypot(f.x - t.x, f.y - t.y) > 60) continue;
+              this.damage(p.src, f, p.dmg * C.HERO_SHOT_SPLASH);
+              k++;
+            }
+          }
           if (p.kind === 'fox') this.addFx({ kind: 'burst', x: t.x, y: t.y, color: p.color, n: 10, life: 0.5, speed: 120 });
         } else if (p.kind === 'fox') {
           // 弧线追踪
