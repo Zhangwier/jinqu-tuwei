@@ -2085,8 +2085,13 @@
   function testHas(key) {
     return testTeam().some((e) => e.key === key);
   }
+  // 英雄每队只能上一个：再点一次就是取消上场；小兵可以重复放
   function addTest(kind, key) {
     const team = testTeam();
+    if (kind === 'hero') {
+      const i = team.findIndex((e) => e.kind === 'hero' && e.key === key);
+      if (i >= 0) return removeTest(team, i), (testLab.msg = '');
+    }
     if (team.length >= 8) return (testLab.msg = '每队最多 8 个');
     team.push({ kind, key });
     testLab.msg = '';
@@ -2100,7 +2105,7 @@
     const team = testTeam();
     const hs = Object.keys(HEROES), us = JQ.ALL_UNITS;
     team.length = 0;
-    for (let i = 0; i < 4; i++) team.push({ kind: 'hero', key: hs[Math.floor(Math.random() * hs.length)] });
+    for (let i = 0; i < 4; i++) team.push({ kind: 'hero', key: hs.splice(Math.floor(Math.random() * hs.length), 1)[0] }); // 英雄不重复
     for (let i = 0; i < 4; i++) team.push({ kind: 'unit', key: us[Math.floor(Math.random() * us.length)] });
     testLab.msg = '';
     saveTest();
@@ -2217,6 +2222,8 @@
       buttons.push({ x, y, w: tw, h: th, fn: () => addTest(testLab.tab === 'hero' ? 'hero' : 'unit', key) });
       if (on) paperTile(key, x, y, tw, th, { on: true });
       else (card(x, y, tw, th, { r: 10 }), text(g, key, x + tw / 2, y + th / 2 + 1, Math.min(th * 0.42, (tw * 0.8) / key.length), '#f0e0c0'));
+      const cnt = testTeam().filter((e) => e.key === key).length;
+      if (testLab.tab === 'unit' && cnt > 1) (JQ.rr(g, x + tw - 34, y + 4, 30, 22, 11), (g.fillStyle = '#a82818'), g.fill(), text(g, '×' + cnt, x + tw - 19, y + 15, 13, '#fff1d8', { font: 'sans-serif' }));
     }
     const py = B - barH + 8;
     iconBtn(24, py, 52, '‹', () => (testLab.page = Math.max(0, testLab.page - 1)));
@@ -3619,7 +3626,7 @@
     v.preload = 'auto';
     v.addEventListener('canplay', () => (qxVideoOk = true));
     v.addEventListener('error', () => (qxVideoOk = false));
-    v.src = 'img/qx_reveal.mp4?v=20261111e';
+    v.src = 'img/qx_reveal.mp4?v=20261111f';
     qxVideo = v;
     return v;
   }
@@ -4244,7 +4251,7 @@
   // 调试/测试用
   window.__jq = {
     get game() { return game; }, get screen() { return screen; }, newGame, view,
-    setScreen: (s) => (screen = s), setDblSell: (v) => (dblSell = v), openCustom, openStages, openTestLab, startTest,
+    setScreen: (s) => (screen = s), setDblSell: (v) => (dblSell = v), openCustom, openStages, openTestLab, startTest, addTest,
     get test() { return { blue: testLab.blue.slice(), red: testLab.red.slice(), game: testLab.game, result: testLab.result }; },
     get stage() { return stageOf(); }, get best() { return bestOf(); },
     get custom() { return { heroes: customHeroes.slice(), units: customUnits.slice() }; },

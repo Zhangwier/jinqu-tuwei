@@ -93,6 +93,20 @@
       check(j.game.modeKey === 'breakthrough' && j.game.activity === 'hulaoguan', '活动关模式');
       check(j.game.sides[0].board.links.some((l) => l.hero === '吕布' && l.level === 3), '活动关送 3 级吕布');
       check(j.game.brkDefs['吕布'] && j.game.brkDefs['吕布'].ult.name === '神鬼乱舞', '突破定义进入战斗');
+      // 测试场：英雄点一次上场、再点一次取消；小兵可以重复放
+      j.openTestLab();
+      const has = (k) => j.test.blue.filter((e) => e.key === k).length;
+      if (has('关羽')) j.addTest('hero', '关羽'); // 先清掉，保证从 0 开始
+      while (j.test.blue.length > 5) j.addTest('hero', j.test.blue.find((e) => e.kind === 'hero') ? j.test.blue.find((e) => e.kind === 'hero').key : '关羽');
+      j.addTest('hero', '关羽');
+      check(has('关羽') === 1, '测试场点英雄上场');
+      j.addTest('hero', '关羽');
+      check(has('关羽') === 0, '再点一次取消上场（不会重复放）');
+      const u0 = has('刀');
+      j.addTest('unit', '刀');
+      j.addTest('unit', '刀');
+      check(has('刀') === u0 + 2, '小兵可以重复放');
+
       // 第一关新手引导：拖卡 → 看召兵 → 招兵 → 合英雄 → 结束
       localStorage.removeItem('jq_tut');
       j.setScreen('menu');
